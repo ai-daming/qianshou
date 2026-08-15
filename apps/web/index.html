@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Qianshou local AI software delivery control plane">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <title>Qianshou · AI 交付控制台</title>
+</head>
+<body>
+  <div class="grid-noise" aria-hidden="true"></div>
+  <main class="app-shell">
+    <header class="command-bar">
+      <a class="brand" href="/" aria-label="Qianshou 首页">
+        <svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-label="Qianshou 千手标志"><path d="M24 42V17M24 26 11 9M24 26 37 9M24 21 7 23M24 21l17 2M24 17 17-8M24 17 7 9"/><circle cx="24" cy="31" r="7"/></svg>
+        <span><strong>QIANSHOU</strong><small>AI DELIVERY CONTROL PLANE</small></span>
+      </a>
+      <div class="project-identity"><span class="signal-dot" id="signal-dot"></span><div><span id="project-name">连接项目中</span><small id="project-subtitle">正在读取本地配置</small></div></div>
+      <div class="bar-actions"><span class="sync-label" id="sync-label">SYNCING</span><button class="ghost-button" id="refresh-button" type="button">刷新事实</button></div>
+    </header>
+
+    <section class="incident-strip is-hidden" id="incident-strip" role="alert"></section>
+
+    <section class="overview" aria-label="交付概况">
+      <article class="overview-lead"><span class="kicker">CURRENT HANDOFF</span><h1 id="handoff-title">等待事实同步</h1><p id="handoff-detail">Qianshou 不把 Agent 的“做完了”当作交付证据。</p></article>
+      <article class="metric-card"><span>NEEDS YOU</span><strong id="needs-you-count">—</strong><small>等待人工判断的工作包</small></article>
+      <article class="metric-card"><span>MILESTONE</span><strong id="milestone-count">—</strong><small id="milestone-state">GitHub Milestone</small></article>
+      <article class="metric-card integration-card"><span>INTEGRATION LINE</span><strong id="integration-sha">—</strong><small id="integration-state">读取 Git 分支</small></article>
+    </section>
+
+    <section class="truth-line" aria-label="事实来源">
+      <span>SYSTEM FACTS</span><div><b>GITHUB</b><span id="github-fact">WAIT</span></div><div><b>GIT</b><span id="git-fact">WAIT</span></div><div><b>WORKTREES</b><span id="worktree-fact">WAIT</span></div><div><b>QIANSHOU</b><span>LOCAL STATE</span></div><time id="collected-at">—</time>
+    </section>
+
+    <div class="workspace">
+      <aside class="mission-rail" aria-labelledby="mission-heading">
+        <div class="section-heading"><div><span class="kicker">MISSION LINE</span><h2 id="mission-heading">工作包</h2></div><span class="counter" id="issue-counter">—</span></div>
+        <div class="issue-list" id="issue-list" role="list"></div>
+      </aside>
+
+      <section class="mission-detail" aria-live="polite">
+        <header class="mission-header"><div><a id="issue-link" href="#" target="_blank" rel="noreferrer">ISSUE —</a><h2 id="issue-title">选择工作包</h2><p id="issue-description">查看外部事实、手工接力状态和下一步。</p></div><span class="status-chip tone-neutral" id="issue-status">WAITING</span></header>
+        <section class="evidence-grid" aria-label="工作包证据">
+          <article><span>GITHUB</span><strong id="github-state">—</strong><small id="github-meta">—</small></article>
+          <article><span>WORKTREE</span><strong id="worktree-state">—</strong><small id="worktree-meta">—</small></article>
+          <article><span>CANDIDATE</span><strong id="candidate-state">—</strong><small>本地账本冻结引用</small></article>
+          <article><span>REVIEW</span><strong id="review-state">—</strong><small id="review-meta">—</small></article>
+        </section>
+        <nav class="workbench-switcher" aria-label="Issue Workspace 工作面">
+          <button type="button" data-workbench-view="discussion" aria-pressed="true"><span>ALWAYS AVAILABLE</span><strong>Discussion Hub</strong><small id="discussion-tab-meta">多个独立 Agent 对话</small></button>
+          <button type="button" data-workbench-view="delivery" aria-pressed="false"><span>RESUMABLE TRACK</span><strong>Delivery Track</strong><small id="delivery-tab-meta">交付现场尚未同步</small></button>
+        </nav>
+
+        <section class="discussion-workbench" id="discussion-view" aria-labelledby="discussion-heading">
+          <header class="workbench-heading"><div><span class="kicker">ISSUE CONVERSATIONS</span><h3 id="discussion-heading">持续讨论</h3><p>每个对话固定使用 Claude Code 或 Codex；需要换引擎时，新建一个对话。</p></div><button class="new-conversation-button" id="new-conversation" type="button">＋ 新建对话</button></header>
+          <section class="stop-condition-panel is-hidden" aria-labelledby="stop-condition-heading" aria-hidden="true">
+            <header><div><span class="kicker">DELIVERY INTERRUPTS</span><h4 id="stop-condition-heading">Stop Conditions</h4></div><button class="secondary-button" id="open-stop-condition" type="button">报告问题并暂停交付</button></header>
+            <p class="stop-condition-note">暂停不会改写当前阶段、Candidate SHA 或已有证据。讨论解决后再明确从哪里继续。</p>
+            <form class="stop-condition-form is-hidden" id="stop-condition-form">
+              <label>问题类型<select id="stop-category"><option value="BUSINESS_AMBIGUITY">业务定义不清</option><option value="SCOPE_CHANGE">范围发生变化</option><option value="TECHNICAL_CONTRADICTION">技术约束冲突</option><option value="ENVIRONMENT">环境问题</option><option value="REVIEW_FINDING">Review 需要业务讨论</option><option value="DELIVERY_CONFLICT">交付或集成冲突</option><option value="OTHER">其他</option></select></label>
+              <label>一句话说明<input id="stop-summary" maxlength="240" placeholder="为什么现在不能继续交付" required></label>
+              <label>需要讨论什么<textarea id="stop-detail" rows="3" placeholder="写明冲突、缺少的决定和已知证据。"></textarea></label>
+              <div class="form-actions"><button class="secondary-button" id="cancel-stop-condition" type="button">取消</button><button class="primary-button" type="submit">记录恢复点</button></div><p class="inline-message" id="stop-condition-message"></p>
+            </form>
+            <div class="stop-condition-list" id="stop-condition-list"></div>
+            <form class="stop-resolution-form is-hidden" id="stop-resolution-form">
+              <header><strong id="stop-resolution-title">解决 Stop Condition</strong><button class="secondary-button" id="cancel-stop-resolution" type="button">取消</button></header>
+              <label>讨论结论<textarea id="stop-resolution" rows="3" placeholder="记录已经确认的决定。" required></textarea></label>
+              <label>下一步<select id="stop-outcome"><option value="CONTINUE">从保留阶段继续</option><option value="REVISE_BRIEF">修订并确认新版开发说明</option><option value="REPAIR">返回开发返修</option><option value="RE_REVIEW">重新独立 Review</option><option value="SPLIT_ISSUE">拆分 Issue</option><option value="SUPERSEDE">由更大的工作替代</option><option value="CANCEL">取消本次交付</option></select></label>
+              <button class="primary-button" type="submit">保存决策并解除这个暂停</button><p class="inline-message" id="stop-resolution-message"></p>
+            </form>
+          </section>
+          <form class="conversation-create is-hidden" id="conversation-create-form">
+            <header class="conversation-create-header"><div><strong id="conversation-create-title">新建讨论对话</strong><small>创建后引擎固定；需要切换时再新建对话。</small></div><button class="secondary-button" id="cancel-conversation" type="button">关闭</button></header>
+            <div class="conversation-create-action"><label for="conversation-engine">选择引擎<select id="conversation-engine"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label><button class="primary-button" type="submit">创建对话</button></div>
+            <p class="inline-message" id="conversation-create-message"></p>
+          </form>
+          <div class="conversation-tabs" id="conversation-tabs"></div>
+          <section class="chat-shell" id="chat-shell">
+            <header class="chat-header"><div><span id="active-conversation-role">尚未选择对话</span><strong id="active-conversation-title">从讨论开始</strong></div><span class="engine-lock" id="active-conversation-engine">ENGINE LOCKED</span></header>
+            <div class="chat-messages" id="chat-messages"><p class="empty">点击“新建对话”，选择 Claude Code 或 Codex 开始讨论。</p></div>
+            <form class="chat-composer" id="chat-form"><textarea id="chat-input" rows="4" placeholder="继续这个 Issue 的讨论……" disabled></textarea><div><span id="chat-status">NO CONVERSATION</span><div class="chat-actions"><button class="stop-run-button is-hidden" id="cancel-turn" type="button">停止本次运行</button><button class="save-button" id="send-message" type="submit" disabled>发送</button></div></div></form>
+          </section>
+        </section>
+
+        <section class="delivery-workbench is-hidden" id="delivery-view" aria-labelledby="delivery-heading">
+        <header class="workbench-heading delivery-heading"><div><span class="kicker">RESUMABLE DELIVERY</span><h3 id="delivery-heading">交付轨道</h3><p>阶段、动作、产物和外部事实分开表达。Stop Condition 只暂停，不抹掉现场。</p></div><span class="delivery-phase" id="delivery-phase">PLANNED</span></header>
+        <nav class="pipeline-strip" aria-label="Issue 交付阶段"><span data-pipeline-stage="0">01 开发说明</span><i></i><span data-pipeline-stage="1">02 环境</span><i></i><span data-pipeline-stage="2">03 开发</span><i></i><span data-pipeline-stage="3">04 候选</span><i></i><span data-pipeline-stage="4">05 Review</span><i></i><span data-pipeline-stage="5">06 Merge</span><i></i><span data-pipeline-stage="6">07 收尾</span></nav>
+        <section class="next-action-panel"><div><span class="kicker">NEXT LEGAL ACTION</span><h3 id="next-action-title">等待同步</h3><p id="next-action-detail">Qianshou 只显示当前允许的下一步。</p></div><button class="copy-command is-hidden" id="copy-command" type="button">复制命令</button></section>
+        <section class="brief-workbench" aria-labelledby="brief-heading">
+          <header><div><span class="kicker">DEVELOPMENT BRIEF</span><h3 id="brief-heading">开发说明</h3></div><span class="brief-version" id="brief-version">DRAFT</span></header>
+          <textarea id="brief-draft" rows="9" placeholder="根据 Discuss 生成后，在这里检查和修改目标、决策、范围、验收标准与未决问题。"></textarea>
+          <div class="brief-actions"><button class="secondary-button" id="generate-development-brief" type="button">根据讨论生成开发说明</button><button class="primary-button" id="freeze-brief" type="button">确认开发说明</button></div>
+          <p class="inline-message" id="brief-message"></p>
+        </section>
+        <section class="environment-panel" aria-label="开发环境">
+          <div><span class="kicker">ISSUE WORKSPACE</span><strong id="workspace-binding">尚未创建</strong><small id="workspace-binding-meta">确认开发说明后才能创建</small></div>
+          <button class="primary-button" id="create-workspace" type="button">创建分支与 Worktree</button>
+        </section>
+        <section class="agent-lanes" aria-label="Agent 接力槽位">
+          <article class="agent-slot developer-slot" id="developer-slot"><header><span>03 / IMPLEMENTER</span><span class="slot-state" id="developer-status">LOCKED</span></header><div class="agent-name"><i></i><strong id="developer-engine">选择引擎</strong></div><p>接收已确认的开发说明和 Issue worktree，在独立会话中编码与测试。</p><button class="slot-button" id="start-implementation" type="button">开始编码</button></article>
+          <div class="handoff-arrow" aria-hidden="true"><span></span><b>HANDOFF</b></div>
+          <article class="agent-slot reviewer-slot is-locked" id="reviewer-slot"><header><span>05 / REVIEWER</span><span class="slot-state" id="reviewer-status">LOCKED</span></header><div class="agent-name"><i></i><strong id="reviewer-engine">选择引擎</strong></div><p>接收同一版开发说明、冻结 SHA 和开发交接输出，独立检查且不改代码。</p><button class="slot-button" id="start-review" type="button" disabled>开始 Review</button></article>
+        </section>
+        <form class="candidate-form" id="candidate-form"><label>开发完成后，记录经过 Git 验证的 Candidate SHA<input id="candidate-input" placeholder="7–40 位 Git SHA" autocomplete="off"></label><button class="secondary-button" id="freeze-candidate" type="submit" disabled>冻结候选</button><p class="inline-message" id="candidate-message"></p></form>
+        <section class="dependency-section"><div class="section-heading compact"><div><span class="kicker">DEPENDENCY GATE</span><h3>前置与关联</h3></div></div><div class="dependency-list" id="dependency-list"></div><div class="pull-list" id="pull-list"></div></section>
+        </section>
+      </section>
+
+      <aside class="control-drawer" aria-labelledby="control-heading">
+        <div class="section-heading"><div><span class="kicker">ACTIVITY & EVIDENCE</span><h2 id="control-heading">现场记录</h2></div><span class="manual-tag">LOCAL / FACTS</span></div>
+        <p class="drawer-note">这里展示恢复所需的检查点和记录，不承担主要操作。</p>
+        <section class="checkpoint-grid" aria-label="Issue 检查点"><article><span>DELIVERY PHASE</span><strong id="checkpoint-phase">—</strong></article><article><span>BRIEF</span><strong id="checkpoint-brief">—</strong></article><article><span>OPEN STOPS</span><strong id="checkpoint-stops">—</strong></article><article><span>CONVERSATIONS</span><strong id="checkpoint-conversations">—</strong></article></section>
+        <section class="activity-panel"><div class="section-heading compact"><div><span class="kicker">ISSUE HISTORY</span><h3>Activity</h3></div></div><ol class="activity-list" id="activity-list"><li class="empty">等待 Issue 协作记录</li></ol></section>
+        <details class="ledger-advanced"><summary>人工交付状态与证据</summary><form id="control-form"><label>交付阶段<select id="phase-input"><option value="PLANNED">待准备</option><option value="WORKTREE_READY">Worktree 就绪</option><option value="IMPLEMENTING">开发中</option><option value="CANDIDATE_READY">候选已冻结</option><option value="REVIEWING">独立 Review</option><option value="CHANGES_REQUESTED">需要返修</option><option value="APPROVED">Review 通过</option><option value="MERGED_TO_MILESTONE">已合入 M7</option><option value="VERIFIED">已验证</option><option value="BLOCKED">旧数据：阻塞</option><option value="NEEDS_HUMAN">旧数据：等待人工判断</option></select></label><label>证据或说明<textarea id="note-input" rows="3"></textarea></label><button class="secondary-button" id="save-control" type="submit">更新人工状态</button><p class="inline-message" id="form-message"></p></form></details>
+      </aside>
+    </div>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
