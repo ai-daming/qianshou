@@ -1,6 +1,7 @@
 package dod
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -140,6 +141,69 @@ func validCriterion(id, method string) Criterion {
 		RequiredEvidence:   "evidence " + id,
 		Required:           true,
 	}
+}
+
+func TestCriterionUnmarshalEnforcesRequiredPresence(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "direct unmarshal without required fails",
+			raw:  `{"id":"D-1","description":"d","verificationMethod":"PR_REVIEW","requiredEvidence":"e"}`,
+		},
+		{
+			name: "direct unmarshal with null required fails",
+			raw:  `{"id":"D-1","description":"d","verificationMethod":"PR_REVIEW","requiredEvidence":"e","required":null}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var criterion Criterion
+			if err := json.Unmarshal([]byte(tt.raw), &criterion); err == nil {
+				t.Fatal("direct Criterion unmarshal must enforce required presence")
+			} else if !strings.Contains(err.Error(), "required") {
+				t.Fatalf("error %q must mention the required flag", err.Error())
+			}
+		})
+	}
+
+	t.Run("direct unmarshal with explicit false decodes", func(t *testing.T) {
+		var criterion Criterion
+		raw := `{"id":"D-1","description":"d","verificationMethod":"PR_REVIEW","requiredEvidence":"e","required":false}`
+		if err := json.Unmarshal([]byte(raw), &criterion); err != nil {
+			t.Fatalf("explicit false must decode: %v", err)
+		}
+		if criterion.Required {
+			t.Fatal("explicit false must stay false")
+		}
+	})
+}
+
+func TestProjectDoDUnmarshalEnforcesRequiredPresence(t *testing.T) {
+	t.Run("nested criterion without required fails the whole decode", func(t *testing.T) {
+		raw := `{"version":"v1","criteria":[{"id":"P-1","description":"d","verificationMethod":"PR_REVIEW","requiredEvidence":"e"}]}`
+		var project ProjectDoD
+		if err := json.Unmarshal([]byte(raw), &project); err == nil {
+			t.Fatal("nested ProjectDoD decode must enforce required presence")
+		} else if !strings.Contains(err.Error(), "required") {
+			t.Fatalf("error %q must mention the required flag", err.Error())
+		}
+	})
+
+	t.Run("nested criterion with explicit false decodes cleanly", func(t *testing.T) {
+		raw := `{"version":"v1","criteria":[{"id":"P-1","description":"d","verificationMethod":"PR_REVIEW","requiredEvidence":"e","required":false}]}`
+		var project ProjectDoD
+		if err := json.Unmarshal([]byte(raw), &project); err != nil {
+			t.Fatalf("explicit false must decode: %v", err)
+		}
+		if len(project.Problems()) != 0 {
+			t.Fatalf("decoded project must be problem-free, got %v", project.Problems())
+		}
+		if project.Criteria[0].Required {
+			t.Fatal("explicit false must stay false through nested decode")
+		}
+	})
 }
 
 func TestProjectDoDProblems(t *testing.T) {

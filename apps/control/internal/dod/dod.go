@@ -79,19 +79,47 @@ type ResolvedDoD struct {
 	Criteria          []ResolvedCriterion
 }
 
+// criterionJSON is the wire shape of a Criterion. Required is a pointer so
+// the JSON boundaries can distinguish an explicit false from a missing or
+// null flag. Plain struct decoding never routes through Criterion's custom
+// unmarshaler, so both boundaries below share this shape deliberately.
+type criterionJSON struct {
+	ID                 string             `json:"id"`
+	Description        string             `json:"description"`
+	VerificationMethod VerificationMethod `json:"verificationMethod"`
+	RequiredEvidence   string             `json:"requiredEvidence"`
+	Required           *bool              `json:"required"`
+}
+
+// UnmarshalJSON enforces required-flag presence on every JSON path — direct
+// Criterion decoding, nested ProjectDoD decoding, and any future storage
+// decoding — so a missing or null required can never silently degrade a
+// criterion to waivable. An explicit false is valid.
+func (c *Criterion) UnmarshalJSON(data []byte) error {
+	var raw criterionJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if raw.Required == nil {
+		return errors.New("criterion required 缺失或为 null：必须显式为 true 或 false")
+	}
+	*c = Criterion{
+		ID:                 raw.ID,
+		Description:        raw.Description,
+		VerificationMethod: raw.VerificationMethod,
+		RequiredEvidence:   raw.RequiredEvidence,
+		Required:           *raw.Required,
+	}
+	return nil
+}
+
 // ParseCriterion parses one criterion from JSON and validates it. It fails
 // closed on every field-level defect: a missing or null required flag,
 // missing id, description, requiredEvidence, and an unsupported verification
 // method are all reported together in one error. JSON syntax and type
 // errors are returned separately, before field validation can run.
 func ParseCriterion(raw []byte) (Criterion, error) {
-	var decoded struct {
-		ID                 string             `json:"id"`
-		Description        string             `json:"description"`
-		VerificationMethod VerificationMethod `json:"verificationMethod"`
-		RequiredEvidence   string             `json:"requiredEvidence"`
-		Required           *bool              `json:"required"`
-	}
+	var decoded criterionJSON
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return Criterion{}, fmt.Errorf("criterion json 无效: %w", err)
 	}
