@@ -1,0 +1,9 @@
+.DS_Store
+.playwright-cli/
+.qianshou/
+node_modules/
+coverage/
+dist/
+output/
+config/projects.json
+*.log

@@ -1,0 +1,24 @@
+{
+  "projects": [
+    {
+      "id": "example-milestone",
+      "repository": {
+        "slug": "<owner>/<repo>",
+        "path": "/absolute/path/to/local/checkout"
+      },
+      "milestone": {
+        "number": 1
+      },
+      "integration": {
+        "branch": "<integration-branch>",
+        "worktree": "/absolute/path/to/integration/worktree",
+        "baseBranch": "main"
+      },
+      "refreshSeconds": 30,
+      "defaults": {
+        "developerEngine": "codex",
+        "reviewerEngine": "claude"
+      }
+    }
+  ]
+}
