@@ -40,9 +40,10 @@ var verificationMethods = map[VerificationMethod]bool{
 	VerificationExternalEvidence:    true,
 }
 
-// Criterion is one structured acceptance or DoD item. ID, Description,
-// VerificationMethod, and RequiredEvidence are mandatory; Required marks the
-// criterion as non-waivable and defaults to false when absent.
+// Criterion is one structured acceptance or DoD item. All five contract
+// fields are mandatory; Required must be an explicit true or false — the
+// JSON boundary (ParseCriterion) rejects a missing or null required flag
+// instead of silently defaulting it to false.
 type Criterion struct {
 	ID                 string             `json:"id"`
 	Description        string             `json:"description"`
@@ -79,14 +80,33 @@ type ResolvedDoD struct {
 }
 
 // ParseCriterion parses one criterion from JSON and validates it. It fails
-// closed: any syntax error or field problem returns an error carrying every
-// determinable problem.
+// closed on every field-level defect: a missing or null required flag,
+// missing id, description, requiredEvidence, and an unsupported verification
+// method are all reported together in one error. JSON syntax and type
+// errors are returned separately, before field validation can run.
 func ParseCriterion(raw []byte) (Criterion, error) {
-	var criterion Criterion
-	if err := json.Unmarshal(raw, &criterion); err != nil {
+	var decoded struct {
+		ID                 string             `json:"id"`
+		Description        string             `json:"description"`
+		VerificationMethod VerificationMethod `json:"verificationMethod"`
+		RequiredEvidence   string             `json:"requiredEvidence"`
+		Required           *bool              `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return Criterion{}, fmt.Errorf("criterion json 无效: %w", err)
 	}
+	criterion := Criterion{
+		ID:                 decoded.ID,
+		Description:        decoded.Description,
+		VerificationMethod: decoded.VerificationMethod,
+		RequiredEvidence:   decoded.RequiredEvidence,
+	}
 	problems := criterion.Problems()
+	if decoded.Required == nil {
+		problems = append(problems, "criterion required 缺失或为 null：必须显式为 true 或 false")
+	} else {
+		criterion.Required = *decoded.Required
+	}
 	if len(problems) == 0 {
 		return criterion, nil
 	}
@@ -157,22 +177,12 @@ func issueProblems(criteria []Criterion) []string {
 // Resolve composes the effective DoD from the versioned project default and
 // the issue-specific criteria. Project criteria come first, issue criteria
 // after, each labelled with its source, and the project version is carried
-// onto the result. It fails closed: any problem in either side, or an id
-// collision between them, yields an empty resolution plus every problem.
+// onto the result. Criterion ids must be unique within each side but may be
+// reused across sides: the (Source, ID) pair identifies a resolved criterion.
+// It fails closed: any problem in either side yields an empty resolution
+// plus every problem.
 func Resolve(project ProjectDoD, issue []Criterion) (ResolvedDoD, []string) {
 	problems := append(project.Problems(), issueProblems(issue)...)
-	projectIDs := make(map[string]bool)
-	for _, criterion := range project.Criteria {
-		projectIDs[criterion.ID] = true
-	}
-	for _, criterion := range issue {
-		if projectIDs[criterion.ID] {
-			problems = append(
-				problems,
-				fmt.Sprintf("issue criterion id 与 project 默认 DoD 冲突：%s", criterion.ID),
-			)
-		}
-	}
 	if len(problems) > 0 {
 		return ResolvedDoD{}, problems
 	}

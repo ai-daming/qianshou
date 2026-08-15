@@ -42,15 +42,42 @@ func TestParseCriterionValidAcrossAllVerificationMethods(t *testing.T) {
 	}
 }
 
-func TestParseCriterionWithoutRequiredFlagStaysOptional(t *testing.T) {
-	raw := `{"id":"D-1","description":"人工复核","verificationMethod":"MANUAL_ACCEPTANCE","requiredEvidence":"复核记录"}`
-	criterion, err := ParseCriterion([]byte(raw))
-	if err != nil {
-		t.Fatalf("ParseCriterion error: %v", err)
+func TestParseCriterionRequiresExplicitRequiredFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "absent required flag fails closed",
+			raw:  `{"id":"D-1","description":"人工复核","verificationMethod":"MANUAL_ACCEPTANCE","requiredEvidence":"复核记录"}`,
+		},
+		{
+			name: "null required flag fails closed",
+			raw:  `{"id":"D-1","description":"人工复核","verificationMethod":"MANUAL_ACCEPTANCE","requiredEvidence":"复核记录","required":null}`,
+		},
 	}
-	if criterion.Required {
-		t.Fatal("absent required flag must default to false, not invent obligation")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseCriterion([]byte(tt.raw))
+			if err == nil {
+				t.Fatal("missing or null required flag must fail closed")
+			}
+			if !strings.Contains(err.Error(), "required") {
+				t.Fatalf("error %q must mention the required flag", err.Error())
+			}
+		})
 	}
+
+	t.Run("explicit false stays optional", func(t *testing.T) {
+		raw := `{"id":"D-1","description":"人工复核","verificationMethod":"MANUAL_ACCEPTANCE","requiredEvidence":"复核记录","required":false}`
+		criterion, err := ParseCriterion([]byte(raw))
+		if err != nil {
+			t.Fatalf("explicit false must parse: %v", err)
+		}
+		if criterion.Required {
+			t.Fatal("explicit false must round-trip as false")
+		}
+	})
 }
 
 func TestParseCriterionFailures(t *testing.T) {
@@ -87,7 +114,7 @@ func TestParseCriterionFailures(t *testing.T) {
 		{
 			name: "all field problems are reported together",
 			raw:  `{"id":"","description":"","verificationMethod":"GUESS","requiredEvidence":""}`,
-			want: []string{"id", "description", "verificationMethod", "requiredEvidence"},
+			want: []string{"id", "description", "verificationMethod", "requiredEvidence", "required"},
 		},
 	}
 	for _, tt := range tests {
@@ -208,6 +235,25 @@ func TestResolveWithoutIssueCriteria(t *testing.T) {
 	}
 }
 
+func TestResolveAllowsSharedIdAcrossSources(t *testing.T) {
+	project := ProjectDoD{Version: "v1", Criteria: []Criterion{validCriterion("SHARED", "PR_REVIEW")}}
+	issue := []Criterion{validCriterion("SHARED", "RUNTIME_VERIFICATION")}
+
+	resolved, problems := Resolve(project, issue)
+	if len(problems) != 0 {
+		t.Fatalf("cross-source id reuse is legal, problems: %v", problems)
+	}
+	if len(resolved.Criteria) != 2 {
+		t.Fatalf("resolved criteria = %d, want both", len(resolved.Criteria))
+	}
+	if resolved.Criteria[0].Criterion.ID != "SHARED" || resolved.Criteria[0].Source != SourceProject {
+		t.Fatalf("project entry wrong: %+v", resolved.Criteria[0])
+	}
+	if resolved.Criteria[1].Criterion.ID != "SHARED" || resolved.Criteria[1].Source != SourceIssue {
+		t.Fatalf("issue entry wrong: %+v", resolved.Criteria[1])
+	}
+}
+
 func TestResolveFailsClosed(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -226,12 +272,6 @@ func TestResolveFailsClosed(t *testing.T) {
 			project: ProjectDoD{Version: "v1"},
 			issue:   []Criterion{{ID: "I-1", Description: "d", VerificationMethod: "GUESS"}},
 			want:    []string{"verificationMethod"},
-		},
-		{
-			name:    "issue criterion id collides with project criterion",
-			project: ProjectDoD{Version: "v1", Criteria: []Criterion{validCriterion("SHARED", "PR_REVIEW")}},
-			issue:   []Criterion{validCriterion("SHARED", "RUNTIME_VERIFICATION")},
-			want:    []string{"SHARED"},
 		},
 		{
 			name:    "duplicate issue criterion ids",
