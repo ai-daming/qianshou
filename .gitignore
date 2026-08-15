@@ -7,3 +7,4 @@ dist/
 output/
 config/projects.json
 *.log
+apps/control/qianshou

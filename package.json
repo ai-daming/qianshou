@@ -9,10 +9,14 @@
     "build": "pnpm --filter @qianshou/core build && pnpm --filter @qianshou/web build && pnpm --filter @qianshou/server build",
     "start": "pnpm --filter @qianshou/server start",
     "test": "pnpm -r test",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
     "typecheck": "pnpm -r typecheck",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.0.0",
