@@ -688,6 +688,13 @@ export async function createQianshouServer(
         if (generatingDevelopmentBrief || conversation.role !== "DISCUSSION") {
           const status = await buildStatus(project);
           const issue = status.issues.find((item) => item.number === conversation.issueNumber);
+          if (conversation.role !== "DISCUSSION" && issue && issue.kind !== "delivery") {
+            sendJson(response, 409, {
+              error: "workflow_not_delivery",
+              message: `#${conversation.issueNumber} 当前为 ${issue.kind.toUpperCase()} 工作流，不能继续交付会话；请在 Discussion 处理重分类。`,
+            });
+            return;
+          }
           const dependencies = issue?.github
             ? dependencyState(issue.github)
             : { ready: false, blockers: [] };

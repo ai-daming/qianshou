@@ -476,7 +476,10 @@ function updateCandidateButton() {
   const issue = selectedIssue();
   const dependenciesReady = issue?.github ? dependencyState(issue.github).ready : false;
   element<HTMLButtonElement>("freeze-candidate").disabled =
-    !/^[0-9a-f]{7,40}$/i.test(value) || Boolean(issue?.attention.required) || !dependenciesReady;
+    !/^[0-9a-f]{7,40}$/i.test(value) ||
+    Boolean(issue?.attention.required) ||
+    !dependenciesReady ||
+    issue?.kind !== "delivery";
 }
 
 function renderConversationTabs() {

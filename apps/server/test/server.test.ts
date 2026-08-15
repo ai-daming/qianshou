@@ -419,6 +419,169 @@ describe("Qianshou HTTP boundary", () => {
     expect(resumedStatus.issues[0].state.key).toBe("REVIEWING");
   });
 
+  it("re-validates workflow kind on every non-Discussion turn after reclassification", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "qianshou-reclass-"));
+    const configPath = join(directory, "projects.json");
+    const statePath = join(directory, "state.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        projects: [
+          {
+            id: "demo",
+            repository: { slug: "owner/repo", path: "/tmp/repo" },
+            milestone: { number: 7 },
+            integration: { branch: "milestone-7", worktree: "/tmp/repo-m7", baseBranch: "main" },
+            refreshSeconds: 30,
+            defaults: { developerEngine: "codex", reviewerEngine: "claude" },
+          },
+        ],
+      }),
+    );
+    let classificationLabels: Array<{ name: string; color: string }> = [];
+    const collector: ExternalCollector = async (project) => ({
+      source: {
+        github: "fake GitHub boundary",
+        git: "fake Git boundary",
+        collectedAt: "2026-08-14T00:00:00.000Z",
+        stale: false,
+        warning: null,
+      },
+      repository: {
+        nameWithOwner: "owner/repo",
+        url: "https://github.com/owner/repo",
+        defaultBranch: "main",
+      },
+      milestone: { number: 7, title: "Demo M7", state: "open", open_issues: 1, closed_issues: 0 },
+      githubIssues: [
+        {
+          number: 19,
+          title: "Poster",
+          body: "Acceptance contract",
+          state: "OPEN",
+          url: "https://github.com/owner/repo/issues/19",
+          updatedAt: "2026-08-14T00:00:00.000Z",
+          milestone: { title: "Demo M7" },
+          labels: classificationLabels,
+          assignees: [],
+          blockedBy: [],
+        },
+      ],
+      pulls: [],
+      worktrees: [],
+      integration: {
+        ...project.integration,
+        sha: "7654321",
+        dirty: [],
+        statusLine: "milestone-7",
+        aheadMain: 0,
+        behindMain: 0,
+        hasRemoteBranch: true,
+      },
+    });
+    const agentInputs: AgentExecutionInput[] = [];
+    const server = await createQianshouServer({
+      configPath,
+      statePath,
+      collector,
+      agentRunner: {
+        run: async (input: AgentExecutionInput): Promise<AgentExecutionResult> => {
+          agentInputs.push(input);
+          return {
+            sessionId: input.sessionId ?? `${input.engine}-session-1`,
+            text: `${input.role} 已收到交接包`,
+            rawEvents: [],
+          };
+        },
+      },
+      worktreeCreator: async (project, issueNumber) => ({
+        issueNumber,
+        branch: `qianshou/issue-${issueNumber}`,
+        path: `/tmp/issue-${issueNumber}`,
+        baseBranch: project.integration.branch,
+        baseSha: "7654321",
+        createdAt: "2026-08-14T00:01:00.000Z",
+      }),
+      refreshIntervalMs: 60_000,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const discussion = await fetch(`${baseUrl}/api/issues/19/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "DISCUSSION", engine: "claude" }),
+    });
+    expect(discussion.status).toBe(201);
+    const discussionPayload = await discussion.json();
+
+    const frozenBrief = await fetch(`${baseUrl}/api/conversations/${discussionPayload.id}/briefs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "# 开发说明\n\n## 已确认决策\n\n上户必须人工确认。" }),
+    });
+    expect(frozenBrief.status).toBe(201);
+
+    const workspace = await fetch(`${baseUrl}/api/issues/19/workspace`, { method: "POST" });
+    expect(workspace.status).toBe(201);
+
+    const implementation = await fetch(`${baseUrl}/api/issues/19/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "IMPLEMENTATION", engine: "claude" }),
+    });
+    expect(implementation.status).toBe(201);
+    const implementationPayload = await implementation.json();
+
+    const before = await (await fetch(`${baseUrl}/api/status`)).json();
+    expect(before.issues[0].control.phase).toBe("WORKTREE_READY");
+    const runsBefore = agentInputs.length;
+
+    classificationLabels = [{ name: "type:milestone-control", color: "5319E7" }];
+    const continuedAsControl = await fetch(
+      `${baseUrl}/api/conversations/${implementationPayload.id}/messages`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "继续实现" }),
+      },
+    );
+    expect(continuedAsControl.status).toBe(409);
+    expect(await continuedAsControl.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    classificationLabels = [{ name: "workflow:operation", color: "FBCA04" }];
+    const continuedAsOperation = await fetch(
+      `${baseUrl}/api/conversations/${implementationPayload.id}/messages`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "继续实现" }),
+      },
+    );
+    expect(continuedAsOperation.status).toBe(409);
+    expect(await continuedAsOperation.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const discussionStillAllowed = await fetch(
+      `${baseUrl}/api/conversations/${discussionPayload.id}/messages`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "重分类后继续讨论。" }),
+      },
+    );
+    expect(discussionStillAllowed.status).toBe(202);
+
+    const after = await (await fetch(`${baseUrl}/api/status`)).json();
+    expect(after.issues[0].control.phase).toBe("WORKTREE_READY");
+    expect(after.issues[0].slots).toEqual({
+      developerStatus: "LOCKED",
+      reviewerStatus: "LOCKED",
+    });
+    expect(agentInputs.length).toBe(runsBefore + 1);
+  });
+
   it("parses native blockedBy relationships returned by GitHub GraphQL", () => {
     const dependencies = parseGithubDependencySnapshot(
       JSON.stringify({
