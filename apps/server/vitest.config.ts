@@ -1,13 +1,13 @@
-import { fileURLToPath, URL } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { fileURLToPath, URL } from "node:url";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
     alias: {
-      '@qianshou/core': fileURLToPath(new URL('../../packages/core/src/index.ts', import.meta.url))
-    }
+      "@qianshou/core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
+    },
   },
   test: {
-    environment: 'node'
-  }
+    environment: "node",
+  },
 });
