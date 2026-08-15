@@ -200,13 +200,13 @@ function renderIssueList() {
       const blockerText =
         dependencies.blockers.map((number) => `#${number}`).join("、") || "GitHub 状态未知";
       return `
-      <button class="issue-card ${dependencies.ready ? "" : "is-delivery-locked"}" type="button" role="listitem" data-issue="${issue.number}" data-delivery-ready="${dependencies.ready}" aria-pressed="${issue.number === selectedIssueNumber}" title="${dependencies.ready ? "可查看并按当前门禁推进" : `交付锁定：等待 ${escapeHtml(blockerText)}；仍可查看和讨论`}">
+      <li><button class="issue-card ${dependencies.ready ? "" : "is-delivery-locked"}" type="button" data-issue="${issue.number}" data-delivery-ready="${dependencies.ready}" aria-pressed="${issue.number === selectedIssueNumber}" title="${dependencies.ready ? "可查看并按当前门禁推进" : `交付锁定：等待 ${escapeHtml(blockerText)}；仍可查看和讨论`}">
         <span class="issue-index">${issue.kind === "control" ? "HQ" : String(index).padStart(2, "0")}</span>
         <span><strong>#${issue.number} · ${escapeHtml(issue.label)}</strong><small>${escapeHtml(issue.github?.state ?? "MISSING")} · ${escapeHtml(PHASE_LABELS[issue.control.phase])}</small><span class="mini-state ${toneClass(issue.state.tone)}">${escapeHtml(issue.state.label).toUpperCase()}</span>${dependencies.ready ? "" : `<span class="dependency-lock">DELIVERY LOCKED · ${escapeHtml(blockerText)}</span>`}</span>
-      </button>`;
+      </button></li>`;
     })
     .join("");
-  document.querySelectorAll<HTMLButtonElement>("[data-issue]").forEach((button) =>
+  document.querySelectorAll<HTMLButtonElement>("[data-issue]").forEach((button) => {
     button.addEventListener("click", () => {
       selectedIssueNumber = Number(button.dataset.issue);
       collaboration = null;
@@ -216,8 +216,8 @@ function renderIssueList() {
       renderIssueList();
       renderSelectedIssue();
       void refreshCollaboration();
-    }),
-  );
+    });
+  });
 }
 
 function relationRow(left: string, right: string) {
@@ -481,13 +481,13 @@ function renderConversationTabs() {
         )
         .join("")
     : "";
-  document.querySelectorAll<HTMLButtonElement>("[data-conversation]").forEach((button) =>
+  document.querySelectorAll<HTMLButtonElement>("[data-conversation]").forEach((button) => {
     button.addEventListener("click", () => {
       activeConversationId = button.dataset.conversation ?? null;
       renderConversationTabs();
       renderChat();
-    }),
-  );
+    });
+  });
 }
 
 function renderChat() {
@@ -599,7 +599,7 @@ function renderStopConditions() {
         )
         .join("")
     : '<p class="empty stop-empty">当前没有 Stop Condition。开发或 Review 遇到需要判断的问题时，从这里带着恢复点回流讨论。</p>';
-  document.querySelectorAll<HTMLButtonElement>("[data-resolve-stop]").forEach((button) =>
+  document.querySelectorAll<HTMLButtonElement>("[data-resolve-stop]").forEach((button) => {
     button.addEventListener("click", () => {
       activeStopConditionId = button.dataset.resolveStop ?? null;
       const stop = conditions.find((item) => item.id === activeStopConditionId);
@@ -608,8 +608,8 @@ function renderStopConditions() {
         : "解决 Stop Condition";
       element<HTMLFormElement>("stop-resolution-form").classList.remove("is-hidden");
       element<HTMLTextAreaElement>("stop-resolution").focus();
-    }),
-  );
+    });
+  });
 }
 
 function renderActivity() {
@@ -956,11 +956,11 @@ async function refresh(force = false) {
 }
 
 element<HTMLButtonElement>("refresh-button").addEventListener("click", () => void refresh(true));
-document.querySelectorAll<HTMLButtonElement>("[data-workbench-view]").forEach((button) =>
+document.querySelectorAll<HTMLButtonElement>("[data-workbench-view]").forEach((button) => {
   button.addEventListener("click", () => {
     setWorkbenchView(button.dataset.workbenchView === "delivery" ? "delivery" : "discussion");
-  }),
-);
+  });
+});
 element<HTMLButtonElement>("new-conversation").addEventListener("click", () =>
   openConversationForm("DISCUSSION"),
 );

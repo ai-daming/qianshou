@@ -269,7 +269,7 @@ export class JsonStateStore {
     return this.mutate(project, async (state) => {
       const projectState = this.requireProjectState(state, project);
       const turn = projectState.turns[turnId];
-      if (!turn || turn.status !== "RUNNING") return null;
+      if (turn?.status !== "RUNNING") return null;
       const now = this.clock();
       const previousEvents = turn.progress?.events ?? [];
       turn.progress = {

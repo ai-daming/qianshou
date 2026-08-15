@@ -326,6 +326,12 @@ a {
 .issue-list {
   display: grid;
   gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.issue-list > li {
+  display: contents;
 }
 .issue-card {
   width: 100%;
