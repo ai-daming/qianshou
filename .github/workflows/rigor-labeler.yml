@@ -1,0 +1,43 @@
+name: rigor labeler
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply rigor label from issue form
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+        run: |
+          set -eu
+          value="$(printf '%s' "$ISSUE_BODY" | awk '/^### Rigor/{flag=1;next} /^### /{flag=0} flag && NF{v=$0} END{print tolower(v)}')"
+          case "$value" in
+            standard|lite|high-risk) ;;
+            *) echo "no Rigor form section found; leaving labels unchanged"; exit 0 ;;
+          esac
+          target="rigor:$value"
+          current="$(printf '%s' "$ISSUE_LABELS" | tr ',' '\n')"
+          while IFS= read -r label; do
+            [ -n "$label" ] || continue
+            if [ "$label" != "$target" ]; then
+              case "$label" in
+                rigor:*) gh issue edit "$ISSUE_NUMBER" -R "$REPO" --remove-label "$label" >/dev/null || true ;;
+              esac
+            fi
+          done <<< "$current"
+          if printf '%s' "$current" | grep -qx "$target"; then
+            echo "$target already applied"
+          else
+            gh issue edit "$ISSUE_NUMBER" -R "$REPO" --add-label "$target" >/dev/null
+            echo "applied $target"
+          fi

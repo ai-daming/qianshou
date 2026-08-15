@@ -537,7 +537,12 @@ export async function createQianshouServer(
         control,
         attention: { required: openStopConditionCount > 0, openStopConditionCount },
         state: deriveIssueState({ projectIssue, githubIssue, control, openStopConditionCount }),
-        slots: deriveSlots(control, dependenciesReady, openStopConditionCount > 0),
+        slots: deriveSlots(
+          control,
+          dependenciesReady,
+          openStopConditionCount > 0,
+          projectIssue.kind,
+        ),
         nextAction: nextAction({
           project,
           projectIssue,

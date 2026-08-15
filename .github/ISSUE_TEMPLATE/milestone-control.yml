@@ -3,6 +3,17 @@ description: Initiative 总控 Issue（CONTROL / MILESTONE_CONTROL）
 title: "M<NUMBER> 总控：<outcome>"
 labels: ["workflow:control", "type:milestone-control"]
 body:
+  - type: dropdown
+    id: rigor
+    attributes:
+      label: Rigor
+      description: 流程严格度：standard 标准交付流程；lite 轻量；high-risk 全部门禁加严。创建时判断一次，后续可通过标签调整。
+      options:
+        - standard
+        - lite
+        - high-risk
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |

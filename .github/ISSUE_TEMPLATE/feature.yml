@@ -2,6 +2,17 @@ name: Feature Delivery
 description: 新增或实质变更的用户/业务能力（DELIVERY / FEATURE）
 labels: ["workflow:delivery", "type:feature"]
 body:
+  - type: dropdown
+    id: rigor
+    attributes:
+      label: Rigor
+      description: 流程严格度：standard 标准交付流程；lite 轻量；high-risk 全部门禁加严。创建时判断一次，后续可通过标签调整。
+      options:
+        - standard
+        - lite
+        - high-risk
+    validations:
+      required: true
   - type: textarea
     id: background
     attributes:

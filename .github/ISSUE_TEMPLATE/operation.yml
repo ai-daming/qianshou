@@ -2,6 +2,17 @@ name: Operation
 description: 部署、迁移、轮换、清理等受控外部动作（OPERATION）
 labels: ["workflow:operation", "type:operation"]
 body:
+  - type: dropdown
+    id: rigor
+    attributes:
+      label: Rigor
+      description: 流程严格度：standard 标准交付流程；lite 轻量；high-risk 全部门禁加严。创建时判断一次，后续可通过标签调整。
+      options:
+        - standard
+        - lite
+        - high-risk
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |

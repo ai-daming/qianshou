@@ -2,6 +2,17 @@ name: Technical Delivery
 description: 重构、状态模型、迁移、架构或技术债（DELIVERY / TECHNICAL）
 labels: ["workflow:delivery", "type:technical"]
 body:
+  - type: dropdown
+    id: rigor
+    attributes:
+      label: Rigor
+      description: 流程严格度：standard 标准交付流程；lite 轻量；high-risk 全部门禁加严。创建时判断一次，后续可通过标签调整。
+      options:
+        - standard
+        - lite
+        - high-risk
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
