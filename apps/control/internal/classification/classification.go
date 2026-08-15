@@ -13,6 +13,7 @@ package classification
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -175,22 +176,28 @@ func Normalize(labels []string) Result {
 	}
 
 	var kind Kind
+	if len(workflows) == 1 && len(kinds) == 1 && kindAllowed[workflow][kinds[0]] {
+		kind = kinds[0]
+	}
+	// Kind validation runs as three independent checks so no determinable
+	// reason is swallowed by another: cardinality, determinable absence, and
+	// determinable incompatibility.
 	if len(kinds) > 1 {
-		// Kind cardinality is workflow-independent: kinds are mutually
-		// exclusive whatever the workflow turns out to be.
 		reasons = append(reasons, Reason{
 			Code:    ReasonMultipleKind,
 			Message: "存在多个 type: 标签：kind 互斥，恰好一个才合法",
 		})
-	} else if len(workflows) == 1 {
-		kind = evaluateKindForWorkflow(workflow, kinds, &reasons)
-	} else if len(kinds) == 0 && everyCandidateRequiresKind(workflows) {
-		// The workflow itself is missing or contradictory, so compatibility
-		// cannot be judged, but when every candidate workflow requires a
-		// kind, its absence is already a failure.
+	}
+	if len(kinds) == 0 && everyCandidateRequiresKind(workflows) {
 		reasons = append(reasons, Reason{
 			Code:    ReasonMissingKind,
-			Message: "所有候选工作流都要求恰好一个 kind 标签，但未找到任何 type: 标签",
+			Message: missingKindMessageFor(workflows),
+		})
+	}
+	if mismatched := incompatibleKinds(workflows, kinds); len(mismatched) > 0 {
+		reasons = append(reasons, Reason{
+			Code:    ReasonKindWorkflowMismatch,
+			Message: mismatchMessage(workflows, mismatched),
 		})
 	}
 
@@ -216,27 +223,53 @@ func Normalize(labels []string) Result {
 	return Result{Valid: true, Classification: Classification{Workflow: workflow, Kind: kind, Rigor: rigor}}
 }
 
-// evaluateKindForWorkflow validates at most one kind label against one
-// unambiguous workflow and returns the kind when compatible.
-func evaluateKindForWorkflow(workflow Workflow, kinds []Kind, reasons *[]Reason) Kind {
-	if len(kinds) == 0 {
-		if kindRequired[workflow] {
-			*reasons = append(*reasons, Reason{
-				Code:    ReasonMissingKind,
-				Message: missingKindMessage(workflow),
-			})
+// incompatibleKinds returns the kinds that no candidate workflow allows. With
+// no workflow evidence at all, every workflow remains a candidate, so any
+// supported kind fits one of them and nothing is determinable.
+func incompatibleKinds(workflows []Workflow, kinds []Kind) []Kind {
+	if len(workflows) == 0 {
+		return nil
+	}
+	var mismatched []Kind
+	for _, kind := range kinds {
+		allowed := false
+		for _, workflow := range workflows {
+			if kindAllowed[workflow][kind] {
+				allowed = true
+				break
+			}
 		}
-		return ""
+		if !allowed {
+			mismatched = append(mismatched, kind)
+		}
 	}
-	kind := kinds[0]
-	if !kindAllowed[workflow][kind] {
-		*reasons = append(*reasons, Reason{
-			Code:    ReasonKindWorkflowMismatch,
-			Message: fmt.Sprintf("type:%s 与工作流 %s 不匹配", kindLabelName(kind), workflow),
-		})
-		return ""
+	return mismatched
+}
+
+func mismatchMessage(workflows []Workflow, mismatched []Kind) string {
+	names := make([]string, 0, len(mismatched))
+	for _, kind := range mismatched {
+		names = append(names, "type:"+kindLabelName(kind))
 	}
-	return kind
+	if len(workflows) == 1 {
+		return fmt.Sprintf("%s 与工作流 %s 不匹配", strings.Join(names, "、"), workflows[0])
+	}
+	candidates := make([]string, 0, len(workflows))
+	for _, workflow := range workflows {
+		candidates = append(candidates, string(workflow))
+	}
+	slices.Sort(candidates)
+	return fmt.Sprintf("%s 与所有候选工作流（%s）都不匹配", strings.Join(names, "、"), strings.Join(candidates, "、"))
+}
+
+// missingKindMessageFor renders the absence of a required kind for one
+// unambiguous workflow or for a candidate set in which every workflow
+// requires one.
+func missingKindMessageFor(workflows []Workflow) string {
+	if len(workflows) == 1 {
+		return missingKindMessage(workflows[0])
+	}
+	return "所有候选工作流都要求恰好一个 kind 标签，但未找到任何 type: 标签"
 }
 
 // everyCandidateRequiresKind reports whether every workflow candidate demands

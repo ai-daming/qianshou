@@ -227,6 +227,26 @@ func TestNormalizeFailsClosed(t *testing.T) {
 			labels:      []string{"workflow:discovery", "rigor:standard"},
 			wantReasons: []ReasonCode{ReasonUnknownLabel, ReasonMissingWorkflow},
 		},
+		{
+			name:        "kind incompatible with every candidate workflow is reported despite ambiguity",
+			labels:      []string{"workflow:control", "workflow:operation", "type:feature", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleWorkflow, ReasonKindWorkflowMismatch},
+		},
+		{
+			name:        "kind incompatibility is reported alongside multiple kind labels",
+			labels:      []string{"workflow:delivery", "type:feature", "type:operation", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleKind, ReasonKindWorkflowMismatch},
+		},
+		{
+			name:        "kind compatible with one candidate stays silent under workflow ambiguity",
+			labels:      []string{"workflow:control", "workflow:delivery", "type:feature", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleWorkflow},
+		},
+		{
+			name:        "every incompatible kind is named in one mismatch reason",
+			labels:      []string{"workflow:control", "workflow:operation", "type:feature", "type:bug", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleWorkflow, ReasonMultipleKind, ReasonKindWorkflowMismatch},
+		},
 	}
 
 	for _, tt := range tests {
