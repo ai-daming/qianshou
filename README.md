@@ -15,6 +15,14 @@ protocol/          OpenAPI contract, the single API truth source
 .agents/skills     Repository-level Agent role skills
 ```
 
+## Repository Agent skills
+
+`.agents/skills/` is a versioned Qianshou product surface and part of every Qianshou source release. These skills are not copied into a user's personal `~/.agents/skills` directory: the repository version governs work performed against that Qianshou revision.
+
+Packaged or binary distributions must ship the same-version repository skills or explicitly expose an equivalent embedded copy. A distribution that omits them is incomplete because it would lose Qianshou's role and mutation contracts.
+
+Current repository skills include `gh-issue`, the governed GitHub Issue operator for creating, updating, commenting, classifying, relating, closing, and reopening Issues.
+
 ## Run in development
 
 Prerequisites: Node.js >= 22, pnpm 10, Go >= 1.26, and an authenticated `gh` for real project data.
