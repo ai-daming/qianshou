@@ -7,18 +7,25 @@ The first configured project is Mamamate Milestone 7. Qianshou binds only to `12
 ## Workspace
 
 ```text
-apps/server       TypeScript HTTP API and CLI adapters
-apps/web          TypeScript + Vite control console
-packages/core     Shared workflow types, schemas, and contracts
-.agents/skills    Repository-level Agent role skills
+apps/control       Go control-plane binary: `qianshou serve` / `qianshou run` (ADR 0001)
+apps/server        TypeScript prototype, frozen as the executable spec
+apps/web           Web console (React scaffold from M1-03)
+packages/core      Shared TypeScript contracts (transitional)
+protocol/          OpenAPI contract, the single API truth source
+.agents/skills     Repository-level Agent role skills
 ```
 
 ## Run in development
 
+Prerequisites: Node.js >= 22, pnpm 10, Go >= 1.26, and an authenticated `gh` for real project data.
+
 ```bash
 pnpm install
+cp config/projects.example.json config/projects.json  # fill in your repo slug and local paths
 pnpm dev
 ```
+
+`config/projects.json` is machine-local and ignored by Git.
 
 Open <http://127.0.0.1:41728>. The Vite dev server proxies `/api` to the local API on port `41727`.
 
@@ -31,11 +38,23 @@ pnpm start
 
 Then open <http://127.0.0.1:41727>.
 
+## Go control binary
+
+```bash
+cd apps/control
+go test ./...
+go build -o qianshou ./cmd/qianshou
+./qianshou serve   # central control server (skeleton; see ADR 0001)
+./qianshou run     # runner process (functional from M2-02)
+```
+
 ## Verify
 
 ```bash
 pnpm check
 ```
+
+`check` runs format check, typecheck, tests, and build. CI runs the same suite plus `go vet`/`go test`/`go build` on every push and pull request.
 
 Runtime handoff state is stored under `.qianshou/` and intentionally ignored by Git. `config/projects.json` contains only repository/Milestone selectors, local paths and runtime preferences. GitHub remains the sole source for the Milestone title, Issue membership, Issue roles, Issue state, and native Parent/Sub-issue and Blocked by/Blocking relationships.
 
