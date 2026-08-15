@@ -537,7 +537,12 @@ export async function createQianshouServer(
         control,
         attention: { required: openStopConditionCount > 0, openStopConditionCount },
         state: deriveIssueState({ projectIssue, githubIssue, control, openStopConditionCount }),
-        slots: deriveSlots(control, dependenciesReady, openStopConditionCount > 0),
+        slots: deriveSlots(
+          control,
+          dependenciesReady,
+          openStopConditionCount > 0,
+          projectIssue.kind,
+        ),
         nextAction: nextAction({
           project,
           projectIssue,
@@ -604,6 +609,13 @@ export async function createQianshouServer(
           return;
         }
         const input = createConversationSchema.parse(await readBody(request));
+        if (input.role !== "DISCUSSION" && issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issueNumber} 是 ${issue.kind.toUpperCase()} 工作流，不开放交付会话；Discussion 仍然可用。`,
+          });
+          return;
+        }
         const dependencies = issue.github
           ? dependencyState(issue.github)
           : { ready: false, blockers: [] };
@@ -676,6 +688,13 @@ export async function createQianshouServer(
         if (generatingDevelopmentBrief || conversation.role !== "DISCUSSION") {
           const status = await buildStatus(project);
           const issue = status.issues.find((item) => item.number === conversation.issueNumber);
+          if (conversation.role !== "DISCUSSION" && issue && issue.kind !== "delivery") {
+            sendJson(response, 409, {
+              error: "workflow_not_delivery",
+              message: `#${conversation.issueNumber} 当前为 ${issue.kind.toUpperCase()} 工作流，不能继续交付会话；请在 Discussion 处理重分类。`,
+            });
+            return;
+          }
           const dependencies = issue?.github
             ? dependencyState(issue.github)
             : { ready: false, blockers: [] };
@@ -806,6 +825,13 @@ export async function createQianshouServer(
           sendJson(response, 404, { error: "issue_not_configured" });
           return;
         }
+        if (issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issueNumber} 是 ${issue.kind.toUpperCase()} 工作流，不创建交付 worktree。`,
+          });
+          return;
+        }
         if (issue.attention.required) {
           sendJson(response, 409, {
             error: "delivery_paused",
@@ -878,6 +904,13 @@ export async function createQianshouServer(
           sendJson(response, 404, { error: "issue_not_configured" });
           return;
         }
+        if (issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issueNumber} 是 ${issue.kind.toUpperCase()} 工作流，不开放交付状态写入。`,
+          });
+          return;
+        }
         const dependencies = issue.github
           ? dependencyState(issue.github)
           : { ready: false, blockers: [] };
@@ -901,6 +934,13 @@ export async function createQianshouServer(
           return;
         }
         const role = url.searchParams.get("role") === "reviewer" ? "reviewer" : "implementer";
+        if (issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issue.number} 是 ${issue.kind.toUpperCase()} 工作流，不提供 implementer/reviewer 任务契约。`,
+          });
+          return;
+        }
         if (role === "implementer" && issue.slots.developerStatus === "LOCKED") {
           sendJson(response, 409, {
             error: "implementer_locked",

@@ -1,7 +1,8 @@
 # Issue types, goals, acceptance criteria, and Definition of Done
 
 Status: Working agreement  
-Decision date: 2026-08-14
+Decision date: 2026-08-14  
+Updated: 2026-08-15 — classification collapsed to three workflows (CONTROL / DELIVERY / OPERATION) with deliveryKind / operationKind and rigor; DISCOVERY and INCIDENT removed as workflows.
 
 ## Purpose
 
@@ -9,7 +10,7 @@ This document defines how Qianshou classifies GitHub Issues, which body structur
 
 The central decisions are:
 
-1. Issue classification has two dimensions: `workflowKind` controls how Qianshou manages the work, while `templateKind` controls what the Issue body must contain.
+1. Issue classification has three dimensions: `workflowKind` selects one of three workflows (`CONTROL`, `DELIVERY`, `OPERATION`); `deliveryKind` or `operationKind` refines it; and exactly one `rigor` (`LITE`, `STANDARD`, `HIGH_RISK`) sets process strictness.
 2. `Goal`, Acceptance Criteria, TDD, and Definition of Done answer different questions and must not be collapsed into one checklist.
 3. Adopting a development brief freezes the current Issue body and resolved Definition of Done into a `DeliveryBaseline` and creates the Issue's active `DeliveryTrack`.
 4. Review evaluates the frozen Issue body plus the adopted development brief against the current PR. Qianshou does not expose a separate Candidate object.
@@ -20,18 +21,20 @@ This is a domain and workflow contract. It does not claim that the current Qians
 
 Issue subject labels such as `bug` and `enhancement` do not determine the complete workflow:
 
-- a Feature, Bug, and Technical Change normally produce code through the same Worktree, PR, and independent Review loop, but require different problem statements;
+- a Feature, Bug, Technical, and Documentation change normally produce code through the same Worktree, PR, and independent Review loop, but require different problem statements;
 - a Milestone Control Issue coordinates outcomes and acceptance and must not receive an implementation Worktree;
-- a Discovery Issue may complete with an evidence-backed decision and newly created Delivery Issues rather than a code PR;
-- an Operational Change may complete only after a real environment action, rollback readiness, and runtime verification;
-- an Incident distinguishes service mitigation from root-cause closure and follow-up delivery.
+- an Operation completes only after a real environment action, rollback readiness, and runtime verification;
+- investigation and decision work does not need its own workflow: Discussion is available to every Issue, RFC and ADR remain artifacts, and follow-up changes become linked Delivery Issues;
+- incident response is an Operation scenario whose repair and repository documentation are represented by linked Delivery Issues.
 
 Qianshou therefore normalizes two independent classifications.
 
 ```text
 IssueDefinition
-├── workflowKind   how the Issue progresses and which actions are legal
-└── templateKind   which semantic fields the Issue body requires
+├── workflowKind   CONTROL | DELIVERY | OPERATION — how the Issue progresses and which actions are legal
+├── deliveryKind   FEATURE | BUG | TECHNICAL | DOCUMENTATION — required for DELIVERY
+├── operationKind  refines OPERATION when applicable
+└── rigor          LITE | STANDARD | HIGH_RISK — exactly one per Issue
 ```
 
 ## Workflow kinds
@@ -40,28 +43,26 @@ IssueDefinition
 |---|---:|---:|---|
 | `CONTROL` | No | No | Child delivery and cross-Issue acceptance satisfy the initiative exit criteria. |
 | `DELIVERY` | Yes | Yes | The adopted target is implemented, independently reviewed in a PR, merged to the intended branch, and closed out. |
-| `DISCOVERY` | Usually no | Optional | The stated question is answered with evidence, the decision is recorded, and required follow-up work is created. |
-| `OPERATIONAL` | Optional | Optional | The authorized operation is performed, verified in the target environment, and supported by rollback and audit evidence. |
-| `INCIDENT` | Optional | Optional | Impact is mitigated, causal understanding is recorded to the required depth, and follow-up work is owned. |
+| `OPERATION` | Optional | Optional | The authorized operation is performed, verified in the target environment, and supported by rollback and audit evidence. |
 
 Only `DELIVERY` uses the standard Coding -> PR -> independent Review -> Merge delivery loop. Qianshou must not manufacture a DeliveryTrack, Worktree, Coding action, or PR requirement for the other workflow kinds merely because their body mentions code.
+
+Each Issue carries exactly one rigor — `LITE`, `STANDARD`, or `HIGH_RISK` — independent of its workflow and kind: a typo fix and a data-destroying migration bug are both `BUG`, but they must not share process strictness. Rigor decides DoD enforcement, evidence requirements, and how many actions require explicit human confirmation. Rigor is carried by per-Issue labels — `rigor:lite`, `rigor:standard`, `rigor:high-risk` — decided on 2026-08-15: every Issue form requires a Rigor selection, and because GitHub Issue Forms cannot apply conditional labels, the repository Action `.github/workflows/rigor-labeler.yml` translates the form value into the matching label once, when the Issue is opened. The Issue body is not a second truth source for rigor: after creation, rigor changes go through label edits (the `SET_CLASSIFICATION` flow), never through body re-parsing. Classification fails closed when an Issue carries zero or multiple rigor labels, symmetric with workflow and kind.
 
 ## Initial template kinds
 
 The initial template set is deliberately small:
 
-| `templateKind` | `workflowKind` | Intended use |
-|---|---|---|
-| `MILESTONE_CONTROL` | `CONTROL` | One coherent initiative coordinated through a Control Issue. |
-| `FEATURE` | `DELIVERY` | New or materially changed user or business capability. |
-| `BUG` | `DELIVERY` | Observed behavior differs from expected behavior. |
-| `TECHNICAL_CHANGE` | `DELIVERY` | Refactoring, state-model changes, migrations, architecture work, or technical debt. |
-| `DOCUMENTATION` | `DELIVERY` | A reviewable repository documentation change whose output lands through a PR. |
-| `INVESTIGATION` | `DISCOVERY` | Evidence gathering, feasibility work, problem diagnosis, or an architectural/business decision. |
-| `OPERATION` | `OPERATIONAL` | Deployment, data migration, credential rotation, production cleanup, or another controlled external action. |
-| `INCIDENT` | `INCIDENT` | Active or retrospective production incident handling. |
+| Template | Workflow | Kind | Intended use |
+|---|---|---|---|
+| `MILESTONE_CONTROL` | `CONTROL` | — | One coherent initiative coordinated through a Control Issue. |
+| `FEATURE` | `DELIVERY` | `FEATURE` | New or materially changed user or business capability. |
+| `BUG` | `DELIVERY` | `BUG` | Observed behavior differs from expected behavior. |
+| `TECHNICAL` | `DELIVERY` | `TECHNICAL` | Refactoring, state-model changes, migrations, architecture work, or technical debt. |
+| `DOCUMENTATION` | `DELIVERY` | `DOCUMENTATION` | A reviewable repository documentation change whose output lands through a PR. |
+| `OPERATION` | `OPERATION` | `operationKind` | Deployment, data migration, credential rotation, production cleanup, or another controlled external action. |
 
-Bug, Feature, Technical Change, and Documentation differ in body structure, but share one delivery algorithm. New templates should be introduced only when their required information or completion semantics materially differ; presentation preferences alone do not justify another type.
+Bug, Feature, Technical, and Documentation differ in body structure, but share one delivery algorithm. Investigation and decision work has no template of its own: it lives in Discussion with RFC and ADR artifacts, and its accepted changes become linked Delivery Issues. Incident response uses the `OPERATION` template; its repair and documentation follow-ups become linked Delivery Issues. New templates should be introduced only when their required information or completion semantics materially differ; presentation preferences alone do not justify another type.
 
 ## Shared Issue definition
 
@@ -70,7 +71,8 @@ Every normalized Issue definition has stable cross-template fields:
 ```text
 IssueDefinition
 ├── workflowKind
-├── templateKind
+├── deliveryKind or operationKind
+├── rigor
 ├── problem
 ├── goal
 ├── nonGoals[]
@@ -80,7 +82,7 @@ IssueDefinition
 └── templateSpecificFields
 ```
 
-`templateSpecificFields` holds genuinely type-specific information such as Bug reproduction steps, an Operation rollback plan, or an Incident timeline. Core fields such as Goal, Acceptance Criteria, constraints, and Definition of Done must not be hidden inside an arbitrary JSON document.
+`templateSpecificFields` holds genuinely type-specific information such as Bug reproduction steps or an Operation rollback plan. Core fields such as Goal, Acceptance Criteria, constraints, and Definition of Done must not be hidden inside an arbitrary JSON document.
 
 Issue, Parent/Sub-issue, Milestone, dependency, label, native Issue Type, and body facts remain owned by GitHub. Qianshou may cache and normalize them, but `~/.qianshou/config.json` must not classify individual Issues or duplicate their bodies.
 
@@ -267,7 +269,7 @@ The Control Issue closes last and has no implementation Worktree or PR. Its DoD 
 - [ ] Regression test reproduces the failure before the fix and passes after it.
 ```
 
-### Technical Change
+### Technical
 
 ```markdown
 ## 当前问题
@@ -308,32 +310,7 @@ The Control Issue closes last and has no implementation Worktree or PR. Its DoD 
 ## Issue-specific DoD
 ```
 
-### Investigation / Decision
-
-```markdown
-## 要回答的问题
-
-## 背景
-
-## 已知事实
-
-## 假设
-
-## 调查范围
-
-## Non-Goals
-
-## 需要收集的证据
-
-## 预期输出
-
-## DoD
-- [ ] The question has an evidence-backed answer.
-- [ ] The decision or remaining uncertainty is recorded.
-- [ ] Required follow-up Delivery Issues are created and linked.
-```
-
-### Operational Change
+### Operation
 
 ```markdown
 ## 操作目标
@@ -357,37 +334,15 @@ The Control Issue closes last and has no implementation Worktree or PR. Its DoD 
 
 An execution claim is not completion evidence. Runtime observation and external-system facts remain distinct from a code PR or Agent transcript.
 
-### Incident
-
-```markdown
-## 影响与严重程度
-
-## 当前状态
-
-## 时间线
-
-## 已知事实与证据
-
-## 临时缓解
-
-## 根因
-
-## 恢复与验证
-
-## 后续行动
-
-## Incident DoD
-```
-
-Mitigation and closure are separate. Restoring service may end the active emergency without proving root cause or completing preventive follow-up work.
+Mitigation and root-cause closure remain separate concerns. Restoring service ends the active emergency without proving root cause; preventive repair and documentation follow-up are owned by linked Delivery Issues.
 
 ## Classification and failure behavior
 
-GitHub remains the owner of Issue classification. Qianshou must normalize a GitHub-native Issue Type or an explicitly supported `type:*` label into `workflowKind` and `templateKind`; the exact repository migration mechanism is a separate implementation decision.
+GitHub remains the owner of Issue classification. Qianshou must normalize GitHub-native Issue Types or explicitly supported `workflow:*` / `type:*` labels into `workflowKind`, `deliveryKind` / `operationKind`, and `rigor`; the exact repository migration mechanism is a separate implementation decision.
 
 Qianshou must not infer type from the title, body prose, Milestone membership, parent relationship, or local configuration. Unknown or contradictory classifications fail closed for delivery mutations while leaving Discussion available.
 
-The current Mamamate repository has `type:milestone-control` plus broad labels such as `bug`, `enhancement`, `documentation`, and `question`, but no repository Issue templates. Migrating existing Issues and installing templates is follow-up work; this document defines the target semantics first.
+The Qianshou repository carries the classification label set — `workflow:control`, `workflow:delivery`, `workflow:operation`, plus the six kind labels — and installs one GitHub issue template per template contract in `.github/ISSUE_TEMPLATE/`; each template pre-applies its classification labels. The Mamamate repository still has `type:milestone-control` plus broad labels such as `bug`, `enhancement`, `documentation`, and `question`, and no issue templates; migrating it is follow-up work.
 
 ## Consequences and follow-up
 

@@ -208,7 +208,7 @@ export const PHASE_LABELS: Record<Phase, string> = {
   NEEDS_HUMAN: "等待人工判断",
 };
 
-export type IssueKind = "control" | "delivery";
+export type IssueKind = "control" | "delivery" | "operation";
 
 export interface IssueDescriptor {
   number: number;
@@ -395,16 +395,23 @@ export function dependencyState(githubIssue: Pick<GithubIssue, "blockedBy">) {
 }
 
 export function issueKindFromGithub(githubIssue: Pick<GithubIssue, "labels">): IssueKind {
-  return githubIssue.labels.some((label) => label.name.toLowerCase() === "type:milestone-control")
-    ? "control"
-    : "delivery";
+  const names = githubIssue.labels.map((label) => label.name.toLowerCase());
+  if (names.includes("type:milestone-control") || names.includes("workflow:control")) {
+    return "control";
+  }
+  if (names.includes("workflow:operation") || names.includes("type:operation")) {
+    return "operation";
+  }
+  return "delivery";
 }
 
 export function deriveSlots(
   control: IssueControl,
   dependenciesReady = true,
   deliveryPaused = false,
+  kind: IssueKind = "delivery",
 ): IssueView["slots"] {
+  if (kind !== "delivery") return { developerStatus: "LOCKED", reviewerStatus: "LOCKED" };
   if (deliveryPaused) return { developerStatus: "PAUSED", reviewerStatus: "PAUSED" };
   if (!dependenciesReady) return { developerStatus: "LOCKED", reviewerStatus: "LOCKED" };
   const candidateReady =
@@ -452,6 +459,8 @@ export function deriveIssueState(input: {
   if (!githubIssue) return { key: "MISSING", label: "GitHub 未找到", tone: "danger", blockers: [] };
   if (projectIssue.kind === "control")
     return { key: "CONTROL", label: "总控", tone: "neutral", blockers: [] };
+  if (projectIssue.kind === "operation")
+    return { key: "OPERATION", label: "运维操作", tone: "neutral", blockers: [] };
   if (openStopConditionCount > 0)
     return { key: "NEEDS_DISCUSSION", label: "需要讨论", tone: "danger", blockers: [] };
   if (control.phase === "BLOCKED")
@@ -506,6 +515,20 @@ export function nextAction(input: {
     return {
       label: "回到 Discussion",
       detail: `${openStopConditionCount} 个 Stop Condition 尚未解决；交付阶段 ${PHASE_LABELS[control.phase]} 和现有证据保持不变`,
+      command: null,
+      shellCommand: null,
+    };
+  if (projectIssue.kind === "control")
+    return {
+      label: "查看子交付进度",
+      detail: `${issueRef} 为总控 Issue（CONTROL），不开放 worktree/Coding/PR；进度来自原生 Sub-issues，最后关闭`,
+      command: null,
+      shellCommand: null,
+    };
+  if (projectIssue.kind === "operation")
+    return {
+      label: "运行验证与回滚证据",
+      detail: `${issueRef} 为受控外部动作（OPERATION），不开放 worktree/Coding/PR；完成后以目标环境运行验证与审计证据关闭`,
       command: null,
       shellCommand: null,
     };

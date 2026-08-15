@@ -334,7 +334,7 @@ function renderCollaboration() {
     stage.classList.toggle("is-complete", index < currentStage);
   });
 
-  if (paused) {
+  if (paused || issue.kind !== "delivery") {
     element("next-action-title").textContent = issue.nextAction.label;
     element("next-action-detail").textContent = issue.nextAction.detail;
   } else if (deliveryBlocked) {
@@ -416,10 +416,13 @@ function renderCollaboration() {
       ? "已具备创建条件"
       : "确认开发说明后才能创建";
   const createWorkspace = element<HTMLButtonElement>("create-workspace");
-  createWorkspace.disabled = Boolean(workspace) || !brief || deliveryBlocked || paused;
+  createWorkspace.disabled =
+    Boolean(workspace) || !brief || deliveryBlocked || paused || issue.kind !== "delivery";
   createWorkspace.textContent = workspace ? "环境已创建" : "创建分支与 Worktree";
 
-  const developerReady = Boolean(brief && workspace && !paused && !deliveryBlocked);
+  const developerReady = Boolean(
+    brief && workspace && !paused && !deliveryBlocked && issue.kind === "delivery",
+  );
   element("developer-slot").classList.toggle("is-locked", !developerReady);
   element("developer-status").textContent =
     implementation?.status ?? (developerReady ? "READY" : "LOCKED");
@@ -431,7 +434,12 @@ function renderCollaboration() {
   startImplementation.textContent = implementation ? "新开开发对话" : "开始编码";
 
   const reviewerReady = Boolean(
-    brief && workspace && issue.control.candidateSha && !paused && !deliveryBlocked,
+    brief &&
+      workspace &&
+      issue.control.candidateSha &&
+      !paused &&
+      !deliveryBlocked &&
+      issue.kind === "delivery",
   );
   element("reviewer-slot").classList.toggle("is-locked", !reviewerReady);
   element("reviewer-status").textContent = review?.status ?? (reviewerReady ? "READY" : "LOCKED");
@@ -442,13 +450,16 @@ function renderCollaboration() {
   startReview.disabled = !reviewerReady;
   startReview.textContent = review ? "新开 Review 对话" : "开始 Review";
 
-  element<HTMLInputElement>("candidate-input").disabled = deliveryBlocked;
-  element<HTMLSelectElement>("phase-input").disabled = deliveryBlocked;
-  element<HTMLTextAreaElement>("note-input").disabled = deliveryBlocked;
-  element<HTMLButtonElement>("save-control").disabled = deliveryBlocked;
-  element("control-form").classList.toggle("is-delivery-locked", deliveryBlocked);
-  element("form-message").textContent = deliveryBlocked
-    ? `等待 ${blockerText} 关闭后才能修改交付状态。`
+  const controlLocked = deliveryBlocked || issue.kind !== "delivery";
+  element<HTMLInputElement>("candidate-input").disabled = controlLocked;
+  element<HTMLSelectElement>("phase-input").disabled = controlLocked;
+  element<HTMLTextAreaElement>("note-input").disabled = controlLocked;
+  element<HTMLButtonElement>("save-control").disabled = controlLocked;
+  element("control-form").classList.toggle("is-delivery-locked", controlLocked);
+  element("form-message").textContent = controlLocked
+    ? issue.kind !== "delivery"
+      ? "非 DELIVERY 工作流不开放交付状态写入。"
+      : `等待 ${blockerText} 关闭后才能修改交付状态。`
     : "";
 
   updateCandidateButton();
@@ -465,7 +476,10 @@ function updateCandidateButton() {
   const issue = selectedIssue();
   const dependenciesReady = issue?.github ? dependencyState(issue.github).ready : false;
   element<HTMLButtonElement>("freeze-candidate").disabled =
-    !/^[0-9a-f]{7,40}$/i.test(value) || Boolean(issue?.attention.required) || !dependenciesReady;
+    !/^[0-9a-f]{7,40}$/i.test(value) ||
+    Boolean(issue?.attention.required) ||
+    !dependenciesReady ||
+    issue?.kind !== "delivery";
 }
 
 function renderConversationTabs() {

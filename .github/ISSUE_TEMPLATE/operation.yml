@@ -1,0 +1,68 @@
+name: Operation
+description: 部署、迁移、轮换、清理等受控外部动作（OPERATION）
+labels: ["workflow:operation", "type:operation"]
+body:
+  - type: dropdown
+    id: rigor
+    attributes:
+      label: Rigor
+      description: 流程严格度：standard 标准交付流程；lite 轻量；high-risk 全部门禁加严。创建时判断一次，后续可通过标签调整。
+      options:
+        - standard
+        - lite
+        - high-risk
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        OPERATION 的完成不是执行声明，而是目标环境中的运行验证加上回滚与审计证据。
+        执行声明、Agent 记录与代码 PR 不能互相替代这些证据。
+  - type: textarea
+    id: objective
+    attributes:
+      label: 操作目标
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 目标环境
+    validations:
+      required: true
+  - type: textarea
+    id: preconditions
+    attributes:
+      label: 前置条件
+  - type: textarea
+    id: risks
+    attributes:
+      label: 风险
+  - type: textarea
+    id: rollback
+    attributes:
+      label: 备份与回滚
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 执行步骤
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 验证方式
+    validations:
+      required: true
+  - type: textarea
+    id: audit
+    attributes:
+      label: 审计证据
+  - type: textarea
+    id: dod
+    attributes:
+      label: DoD
+      placeholder: |
+        - [ ] The operation is performed and verified in the target environment.

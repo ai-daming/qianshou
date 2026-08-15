@@ -131,6 +131,50 @@ describe("delivery domain", () => {
     );
   });
 
+  it("classifies OPERATION labels as operation instead of delivery", () => {
+    expect(issueKindFromGithub({ labels: [{ name: "workflow:operation", color: "000000" }] })).toBe(
+      "operation",
+    );
+    expect(issueKindFromGithub({ labels: [{ name: "type:operation", color: "000000" }] })).toBe(
+      "operation",
+    );
+  });
+
+  it("does not route OPERATION issues into the delivery state machine", () => {
+    const operationIssue = { ...projectIssue, kind: "operation" } as IssueDescriptor;
+    expect(deriveIssueState({ projectIssue: operationIssue, githubIssue, control })).toMatchObject({
+      key: "OPERATION",
+    });
+    expect(
+      nextAction({
+        project,
+        projectIssue: operationIssue,
+        githubIssue: { ...githubIssue, blockedBy: [] },
+        control,
+      }),
+    ).toMatchObject({ command: null, shellCommand: null });
+    expect(deriveSlots(control, true, false, "operation")).toEqual({
+      developerStatus: "LOCKED",
+      reviewerStatus: "LOCKED",
+    });
+  });
+
+  it("does not offer delivery actions for CONTROL issues", () => {
+    const controlIssue = { ...projectIssue, kind: "control" } as IssueDescriptor;
+    const action = nextAction({
+      project,
+      projectIssue: controlIssue,
+      githubIssue: { ...githubIssue, blockedBy: [] },
+      control,
+    });
+    expect(action.label).not.toContain("worktree");
+    expect(action).toMatchObject({ command: null, shellCommand: null });
+    expect(deriveSlots(control, true, false, "control")).toEqual({
+      developerStatus: "LOCKED",
+      reviewerStatus: "LOCKED",
+    });
+  });
+
   it("locks Reviewer until a candidate is frozen", () => {
     expect(deriveSlots({ ...control, phase: "WORKTREE_READY" }).reviewerStatus).toBe("LOCKED");
     expect(
