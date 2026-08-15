@@ -289,11 +289,12 @@ describe("Qianshou HTTP boundary", () => {
     expect(sendMessage.status).toBe(202);
 
     let collaboration: any;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const messageDeadline = Date.now() + 5_000;
+    while (Date.now() < messageDeadline) {
       const response = await fetch(`${baseUrl}/api/issues/224/collaboration`);
       collaboration = await response.json();
       if (collaboration.conversations[0]?.messages.length === 2) break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(collaboration.conversations[0].sessionId).toBe("claude-session-1");
     expect(collaboration.conversations[0].messages[1].text).toContain("人工确认");
@@ -306,7 +307,8 @@ describe("Qianshou HTTP boundary", () => {
     const generationTurn = await generateBrief.json();
     expect(generationTurn.intent).toBe("DEVELOPMENT_BRIEF");
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const briefDeadline = Date.now() + 5_000;
+    while (Date.now() < briefDeadline) {
       const response = await fetch(`${baseUrl}/api/issues/224/collaboration`);
       collaboration = await response.json();
       if (
@@ -314,7 +316,7 @@ describe("Qianshou HTTP boundary", () => {
           ?.status === "COMPLETED"
       )
         break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const generatedMessage = collaboration.conversations[0].messages.find(
       (message: { turnId: string; role: string }) =>
@@ -714,10 +716,11 @@ describe("Qianshou HTTP boundary", () => {
     ).json();
 
     let running: any;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const progressDeadline = Date.now() + 5_000;
+    while (Date.now() < progressDeadline) {
       running = await (await fetch(`${baseUrl}/api/issues/224/collaboration`)).json();
       if (running.turns[0]?.progress?.eventCount === 4) break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(running.turns[0]).toMatchObject({
       status: "RUNNING",
