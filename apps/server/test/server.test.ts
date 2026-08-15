@@ -66,7 +66,7 @@ describe("Qianshou HTTP boundary", () => {
         url: `https://github.com/owner/repo/issues/${number}`,
         updatedAt: "2026-08-14T00:00:00.000Z",
         milestone: { title: "Demo M7" },
-        labels: [],
+        labels: number === 149 ? [{ name: "workflow:operation", color: "FBCA04" }] : [],
         assignees: [],
         blockedBy: number === 19 ? [{ number: 224, state: "OPEN" }] : [],
       })),
@@ -186,6 +186,27 @@ describe("Qianshou HTTP boundary", () => {
     expect(await blockedImplementation.json()).toMatchObject({
       error: "dependency_blocked",
     });
+
+    const operationImplementation = await fetch(`${baseUrl}/api/issues/149/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "IMPLEMENTATION", engine: "claude" }),
+    });
+    expect(operationImplementation.status).toBe(409);
+    expect(await operationImplementation.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const operationDiscussion = await fetch(`${baseUrl}/api/issues/149/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "DISCUSSION", engine: "claude" }),
+    });
+    expect(operationDiscussion.status).toBe(201);
+
+    const operationWorkspace = await fetch(`${baseUrl}/api/issues/149/workspace`, {
+      method: "POST",
+    });
+    expect(operationWorkspace.status).toBe(409);
+    expect(await operationWorkspace.json()).toMatchObject({ error: "workflow_not_delivery" });
 
     const blockedControlUpdate = await fetch(`${baseUrl}/api/issues/19/control`, {
       method: "POST",

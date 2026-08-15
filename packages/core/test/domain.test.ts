@@ -159,6 +159,18 @@ describe("delivery domain", () => {
     });
   });
 
+  it("does not offer delivery actions for CONTROL issues", () => {
+    const controlIssue = { ...projectIssue, kind: "control" } as IssueDescriptor;
+    const action = nextAction({
+      project,
+      projectIssue: controlIssue,
+      githubIssue: { ...githubIssue, blockedBy: [] },
+      control,
+    });
+    expect(action.label).not.toContain("worktree");
+    expect(action).toMatchObject({ command: null, shellCommand: null });
+  });
+
   it("locks Reviewer until a candidate is frozen", () => {
     expect(deriveSlots({ ...control, phase: "WORKTREE_READY" }).reviewerStatus).toBe("LOCKED");
     expect(

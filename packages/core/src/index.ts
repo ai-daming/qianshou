@@ -518,6 +518,13 @@ export function nextAction(input: {
       command: null,
       shellCommand: null,
     };
+  if (projectIssue.kind === "control")
+    return {
+      label: "查看子交付进度",
+      detail: `${issueRef} 为总控 Issue（CONTROL），不开放 worktree/Coding/PR；进度来自原生 Sub-issues，最后关闭`,
+      command: null,
+      shellCommand: null,
+    };
   if (projectIssue.kind === "operation")
     return {
       label: "运行验证与回滚证据",

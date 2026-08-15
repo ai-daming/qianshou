@@ -2,7 +2,7 @@ name: rigor labeler
 
 on:
   issues:
-    types: [opened, edited]
+    types: [opened]
 
 permissions:
   issues: write

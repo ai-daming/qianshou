@@ -609,6 +609,13 @@ export async function createQianshouServer(
           return;
         }
         const input = createConversationSchema.parse(await readBody(request));
+        if (input.role !== "DISCUSSION" && issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issueNumber} 是 ${issue.kind.toUpperCase()} 工作流，不开放交付会话；Discussion 仍然可用。`,
+          });
+          return;
+        }
         const dependencies = issue.github
           ? dependencyState(issue.github)
           : { ready: false, blockers: [] };
@@ -809,6 +816,13 @@ export async function createQianshouServer(
         const issue = status.issues.find((item) => item.number === issueNumber);
         if (!issue) {
           sendJson(response, 404, { error: "issue_not_configured" });
+          return;
+        }
+        if (issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issueNumber} 是 ${issue.kind.toUpperCase()} 工作流，不创建交付 worktree。`,
+          });
           return;
         }
         if (issue.attention.required) {

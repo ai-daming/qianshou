@@ -334,7 +334,7 @@ function renderCollaboration() {
     stage.classList.toggle("is-complete", index < currentStage);
   });
 
-  if (paused) {
+  if (paused || issue.kind !== "delivery") {
     element("next-action-title").textContent = issue.nextAction.label;
     element("next-action-detail").textContent = issue.nextAction.detail;
   } else if (deliveryBlocked) {
