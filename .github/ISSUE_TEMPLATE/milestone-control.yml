@@ -1,0 +1,64 @@
+name: Milestone Control
+description: Initiative 总控 Issue（CONTROL / MILESTONE_CONTROL）
+title: "M<NUMBER> 总控：<outcome>"
+labels: ["workflow:control", "type:milestone-control"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        本 Issue 是该 Milestone 唯一的 Milestone Control Issue：协调子交付与跨 Issue 验收，
+        不拥有实现 worktree、Coding 或 PR，最后关闭。子 Issue 进度来自 GitHub 原生 Sub-issues，
+        正文不要复制子任务清单。
+  - type: textarea
+    id: positioning
+    attributes:
+      label: 定位
+      description: 本 Issue 在 Milestone 中的控制职责。
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 最终结果
+      description: 一个可度量的产品或工程结果。
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: 跨 Issue 不变量
+  - type: textarea
+    id: children
+    attributes:
+      label: 子 Issue 与依赖
+      description: 使用 GitHub 原生 Sub-issues 与 Blocked by/Blocking 关系；依赖只记直接前置。
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: 风险
+  - type: textarea
+    id: exit
+    attributes:
+      label: Milestone DoD / 退出条件
+      description: 跨 Issue 的结果验收，不是子任务清单的复制。
+    validations:
+      required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: 架构与决策入口
+      description: Plan / Architecture / RFC / ADR 链接。

@@ -1,0 +1,42 @@
+name: Documentation Delivery
+description: 经 PR 落地的仓库文档交付（DELIVERY / DOCUMENTATION）
+labels: ["workflow:delivery", "type:documentation"]
+body:
+  - type: textarea
+    id: gap
+    attributes:
+      label: 文档缺口
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+    validations:
+      required: true
+  - type: textarea
+    id: audience
+    attributes:
+      label: 目标读者与使用场景
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] AC-1: ...
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: 必须保持一致的事实来源
+  - type: textarea
+    id: dod
+    attributes:
+      label: Issue-specific DoD

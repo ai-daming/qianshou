@@ -1,0 +1,48 @@
+name: Feature Delivery
+description: 新增或实质变更的用户/业务能力（DELIVERY / FEATURE）
+labels: ["workflow:delivery", "type:feature"]
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景与问题
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+    validations:
+      required: true
+  - type: textarea
+    id: scenarios
+    attributes:
+      label: 用户场景
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] AC-1: ...
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 约束与不变量
+  - type: textarea
+    id: dod
+    attributes:
+      label: Issue-specific DoD
+      placeholder: |
+        - [ ] DOD-1: ...
+  - type: textarea
+    id: related
+    attributes:
+      label: 相关设计与依赖

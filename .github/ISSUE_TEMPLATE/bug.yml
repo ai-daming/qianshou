@@ -1,0 +1,48 @@
+name: Bug Delivery
+description: 观察行为与预期行为不一致（DELIVERY / BUG）
+labels: ["workflow:delivery", "type:bug"]
+body:
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 当前错误行为
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现方式
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 已知证据
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] AC-1: ...
+    validations:
+      required: true
+  - type: textarea
+    id: must-not-break
+    attributes:
+      label: 不允许破坏的行为
+  - type: textarea
+    id: dod
+    attributes:
+      label: Issue-specific DoD
+      placeholder: |
+        - [ ] Regression test reproduces the failure before the fix and passes after it.

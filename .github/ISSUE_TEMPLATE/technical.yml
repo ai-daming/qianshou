@@ -1,0 +1,52 @@
+name: Technical Delivery
+description: 重构、状态模型、迁移、架构或技术债（DELIVERY / TECHNICAL）
+labels: ["workflow:delivery", "type:technical"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前问题
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal / 目标状态
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: 现有不变量
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 兼容性要求
+  - type: textarea
+    id: migration
+    attributes:
+      label: 数据迁移与回滚
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] AC-1: ...
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Issue-specific DoD
+      placeholder: |
+        - [ ] DOD-1: ...
+  - type: textarea
+    id: adr
+    attributes:
+      label: ADR / 架构文档
