@@ -15,75 +15,104 @@ func reasonCodes(t *testing.T, result Result) []ReasonCode {
 	return codes
 }
 
-func TestNormalizeLegalCombinations(t *testing.T) {
-	tests := []struct {
-		name   string
-		labels []string
-		want   Classification
+// TestNormalizeAllLegalCombinations covers every legal classification in the
+// contract: 7 workflow-kind combinations × 3 rigor values = 21 cases.
+func TestNormalizeAllLegalCombinations(t *testing.T) {
+	kindCases := []struct {
+		name     string
+		labels   []string
+		workflow Workflow
+		wantKind Kind
 	}{
 		{
-			name:   "delivery technical standard",
-			labels: []string{"workflow:delivery", "type:technical", "rigor:standard"},
-			want:   Classification{Workflow: WorkflowDelivery, Kind: KindTechnical, Rigor: RigorStandard},
+			name:     "control-milestone-control",
+			labels:   []string{"workflow:control", "type:milestone-control"},
+			workflow: WorkflowControl,
+			wantKind: KindMilestoneControl,
 		},
 		{
-			name:   "delivery bug lite",
-			labels: []string{"workflow:delivery", "type:bug", "rigor:lite"},
-			want:   Classification{Workflow: WorkflowDelivery, Kind: KindBug, Rigor: RigorLite},
+			name:     "delivery-feature",
+			labels:   []string{"workflow:delivery", "type:feature"},
+			workflow: WorkflowDelivery,
+			wantKind: KindFeature,
 		},
 		{
-			name:   "delivery feature high risk",
-			labels: []string{"workflow:delivery", "type:feature", "rigor:high-risk"},
-			want:   Classification{Workflow: WorkflowDelivery, Kind: KindFeature, Rigor: RigorHighRisk},
+			name:     "delivery-bug",
+			labels:   []string{"workflow:delivery", "type:bug"},
+			workflow: WorkflowDelivery,
+			wantKind: KindBug,
 		},
 		{
-			name:   "delivery documentation standard",
-			labels: []string{"workflow:delivery", "type:documentation", "rigor:standard"},
-			want:   Classification{Workflow: WorkflowDelivery, Kind: KindDocumentation, Rigor: RigorStandard},
+			name:     "delivery-technical",
+			labels:   []string{"workflow:delivery", "type:technical"},
+			workflow: WorkflowDelivery,
+			wantKind: KindTechnical,
 		},
 		{
-			name:   "control with milestone control kind",
-			labels: []string{"workflow:control", "type:milestone-control", "rigor:standard"},
-			want:   Classification{Workflow: WorkflowControl, Kind: KindMilestoneControl, Rigor: RigorStandard},
+			name:     "delivery-documentation",
+			labels:   []string{"workflow:delivery", "type:documentation"},
+			workflow: WorkflowDelivery,
+			wantKind: KindDocumentation,
 		},
 		{
-			name:   "operation with operation kind",
-			labels: []string{"workflow:operation", "type:operation", "rigor:standard"},
-			want:   Classification{Workflow: WorkflowOperation, Kind: KindOperation, Rigor: RigorStandard},
+			name:     "operation-operation-kind",
+			labels:   []string{"workflow:operation", "type:operation"},
+			workflow: WorkflowOperation,
+			wantKind: KindOperation,
 		},
 		{
-			name:   "operation without kind label",
-			labels: []string{"workflow:operation", "rigor:standard"},
-			want:   Classification{Workflow: WorkflowOperation, Kind: "", Rigor: RigorStandard},
-		},
-		{
-			name: "workflow neutral labels are ignored",
-			labels: []string{
-				"workflow:delivery", "type:feature", "rigor:standard",
-				"duplicate", "invalid", "wontfix", "good first issue", "help wanted",
-			},
-			want: Classification{Workflow: WorkflowDelivery, Kind: KindFeature, Rigor: RigorStandard},
-		},
-		{
-			name:   "label case and surrounding whitespace are normalized",
-			labels: []string{"Workflow:Delivery", "TYPE:Feature", " RIGOR:Standard "},
-			want:   Classification{Workflow: WorkflowDelivery, Kind: KindFeature, Rigor: RigorStandard},
+			name:     "operation-no-kind",
+			labels:   []string{"workflow:operation"},
+			workflow: WorkflowOperation,
+			wantKind: "",
 		},
 	}
+	rigors := []struct {
+		label string
+		value Rigor
+	}{
+		{"rigor:lite", RigorLite},
+		{"rigor:standard", RigorStandard},
+		{"rigor:high-risk", RigorHighRisk},
+	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := Normalize(tt.labels)
-			if !got.Valid {
-				t.Fatalf("Normalize(%v) invalid, reasons: %+v", tt.labels, reasonCodes(t, got))
-			}
-			if got.Classification != tt.want {
-				t.Fatalf("Normalize(%v) = %+v, want %+v", tt.labels, got.Classification, tt.want)
-			}
-			if len(got.Reasons) != 0 {
-				t.Fatalf("valid result must carry no reasons, got %+v", reasonCodes(t, got))
-			}
-		})
+	for _, kindCase := range kindCases {
+		for _, rigor := range rigors {
+			t.Run(kindCase.name+"-"+string(rigor.value), func(t *testing.T) {
+				labels := append(append([]string{}, kindCase.labels...), rigor.label)
+				got := Normalize(labels)
+				if !got.Valid {
+					t.Fatalf("Normalize(%v) invalid, reasons: %+v", labels, reasonCodes(t, got))
+				}
+				want := Classification{Workflow: kindCase.workflow, Kind: kindCase.wantKind, Rigor: rigor.value}
+				if got.Classification != want {
+					t.Fatalf("Normalize(%v) = %+v, want %+v", labels, got.Classification, want)
+				}
+				if len(got.Reasons) != 0 {
+					t.Fatalf("valid result must carry no reasons, got %+v", reasonCodes(t, got))
+				}
+			})
+		}
+	}
+}
+
+func TestNormalizeIgnoresWorkflowNeutralLabels(t *testing.T) {
+	labels := []string{
+		"workflow:delivery", "type:feature", "rigor:standard",
+		"duplicate", "invalid", "wontfix", "good first issue", "help wanted",
+	}
+	got := Normalize(labels)
+	want := Classification{Workflow: WorkflowDelivery, Kind: KindFeature, Rigor: RigorStandard}
+	if !got.Valid || got.Classification != want {
+		t.Fatalf("Normalize(%v) = %+v (valid=%v), want %+v", labels, got.Classification, got.Valid, want)
+	}
+}
+
+func TestNormalizeNormalizesLabelCaseAndWhitespace(t *testing.T) {
+	got := Normalize([]string{"Workflow:Delivery", "TYPE:Feature", " RIGOR:Standard "})
+	want := Classification{Workflow: WorkflowDelivery, Kind: KindFeature, Rigor: RigorStandard}
+	if !got.Valid || got.Classification != want {
+		t.Fatalf("got %+v (valid=%v), want %+v", got.Classification, got.Valid, want)
 	}
 }
 
@@ -172,6 +201,31 @@ func TestNormalizeFailsClosed(t *testing.T) {
 			name:        "several independent failures are reported together",
 			labels:      []string{"workflow:delivery", "type:operation"},
 			wantReasons: []ReasonCode{ReasonKindWorkflowMismatch, ReasonMissingRigor},
+		},
+		{
+			name:        "kind cardinality is reported even when workflow is contradictory",
+			labels:      []string{"workflow:delivery", "workflow:operation", "type:feature", "type:bug", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleWorkflow, ReasonMultipleKind},
+		},
+		{
+			name:        "missing kind is reported when every candidate workflow requires one",
+			labels:      []string{"workflow:control", "workflow:delivery", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleWorkflow, ReasonMissingKind},
+		},
+		{
+			name:        "missing kind stays silent when a candidate workflow allows no kind",
+			labels:      []string{"workflow:delivery", "workflow:operation", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonMultipleWorkflow},
+		},
+		{
+			name:        "kind cardinality is reported even with an unknown workflow label",
+			labels:      []string{"workflow:discovery", "type:feature", "type:bug", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonUnknownLabel, ReasonMissingWorkflow, ReasonMultipleKind},
+		},
+		{
+			name:        "missing kind stays silent when the workflow is unknown entirely",
+			labels:      []string{"workflow:discovery", "rigor:standard"},
+			wantReasons: []ReasonCode{ReasonUnknownLabel, ReasonMissingWorkflow},
 		},
 	}
 

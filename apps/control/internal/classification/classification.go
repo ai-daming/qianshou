@@ -6,9 +6,9 @@
 // (workflow:*, type:*, rigor:*). It never infers classification from titles,
 // body prose, milestone membership, parent relationships, or local
 // configuration. Missing, unknown, or contradictory labels fail closed: the
-// result is invalid and carries every reason, so delivery mutations stay
-// locked while Discussion remains available. Workflow-neutral labels such as
-// duplicate or wontfix are ignored.
+// result is invalid and carries every determinable reason, so delivery
+// mutations stay locked while Discussion remains available. Workflow-neutral
+// labels such as duplicate or wontfix are ignored.
 package classification
 
 import (
@@ -76,7 +76,7 @@ type Reason struct {
 }
 
 // Result is the outcome of normalization. When Valid is false,
-// Classification is the zero value and Reasons lists every cause.
+// Classification is the zero value and Reasons lists every determinable cause.
 type Result struct {
 	Classification Classification
 	Valid          bool
@@ -175,8 +175,23 @@ func Normalize(labels []string) Result {
 	}
 
 	var kind Kind
-	if len(workflows) == 1 {
-		kind = evaluateKind(workflow, kinds, &reasons)
+	if len(kinds) > 1 {
+		// Kind cardinality is workflow-independent: kinds are mutually
+		// exclusive whatever the workflow turns out to be.
+		reasons = append(reasons, Reason{
+			Code:    ReasonMultipleKind,
+			Message: "存在多个 type: 标签：kind 互斥，恰好一个才合法",
+		})
+	} else if len(workflows) == 1 {
+		kind = evaluateKindForWorkflow(workflow, kinds, &reasons)
+	} else if len(kinds) == 0 && everyCandidateRequiresKind(workflows) {
+		// The workflow itself is missing or contradictory, so compatibility
+		// cannot be judged, but when every candidate workflow requires a
+		// kind, its absence is already a failure.
+		reasons = append(reasons, Reason{
+			Code:    ReasonMissingKind,
+			Message: "所有候选工作流都要求恰好一个 kind 标签，但未找到任何 type: 标签",
+		})
 	}
 
 	var rigor Rigor
@@ -201,17 +216,9 @@ func Normalize(labels []string) Result {
 	return Result{Valid: true, Classification: Classification{Workflow: workflow, Kind: kind, Rigor: rigor}}
 }
 
-// evaluateKind validates the kind labels against one unambiguous workflow.
-// Kind evaluation is skipped when the workflow itself is missing or
-// contradictory, because the required kind depends on it.
-func evaluateKind(workflow Workflow, kinds []Kind, reasons *[]Reason) Kind {
-	if len(kinds) > 1 {
-		*reasons = append(*reasons, Reason{
-			Code:    ReasonMultipleKind,
-			Message: "存在多个 type: 标签：kind 互斥，恰好一个才合法",
-		})
-		return ""
-	}
+// evaluateKindForWorkflow validates at most one kind label against one
+// unambiguous workflow and returns the kind when compatible.
+func evaluateKindForWorkflow(workflow Workflow, kinds []Kind, reasons *[]Reason) Kind {
 	if len(kinds) == 0 {
 		if kindRequired[workflow] {
 			*reasons = append(*reasons, Reason{
@@ -230,6 +237,21 @@ func evaluateKind(workflow Workflow, kinds []Kind, reasons *[]Reason) Kind {
 		return ""
 	}
 	return kind
+}
+
+// everyCandidateRequiresKind reports whether every workflow candidate demands
+// exactly one kind label. With no workflow evidence at all, OPERATION stays a
+// candidate that legitimately carries no kind, so the answer is false.
+func everyCandidateRequiresKind(workflows []Workflow) bool {
+	if len(workflows) == 0 {
+		return false
+	}
+	for _, workflow := range workflows {
+		if !kindRequired[workflow] {
+			return false
+		}
+	}
+	return true
 }
 
 func missingKindMessage(workflow Workflow) string {
