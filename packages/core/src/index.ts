@@ -411,7 +411,7 @@ export function deriveSlots(
   deliveryPaused = false,
   kind: IssueKind = "delivery",
 ): IssueView["slots"] {
-  if (kind === "operation") return { developerStatus: "LOCKED", reviewerStatus: "LOCKED" };
+  if (kind !== "delivery") return { developerStatus: "LOCKED", reviewerStatus: "LOCKED" };
   if (deliveryPaused) return { developerStatus: "PAUSED", reviewerStatus: "PAUSED" };
   if (!dependenciesReady) return { developerStatus: "LOCKED", reviewerStatus: "LOCKED" };
   const candidateReady =

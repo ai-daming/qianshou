@@ -58,15 +58,20 @@ describe("Qianshou HTTP boundary", () => {
         defaultBranch: "main",
       },
       milestone: { number: 7, title: "Demo M7", state: "open", open_issues: 1, closed_issues: 0 },
-      githubIssues: [224, 19, 149].map((number) => ({
+      githubIssues: [224, 19, 149, 151].map((number) => ({
         number,
-        title: number === 224 ? "Lifecycle" : "Poster",
+        title: number === 224 ? "Lifecycle" : number === 151 ? "Control" : "Poster",
         body: "Acceptance contract",
         state: "OPEN",
         url: `https://github.com/owner/repo/issues/${number}`,
         updatedAt: "2026-08-14T00:00:00.000Z",
         milestone: { title: "Demo M7" },
-        labels: number === 149 ? [{ name: "workflow:operation", color: "FBCA04" }] : [],
+        labels:
+          number === 149
+            ? [{ name: "workflow:operation", color: "FBCA04" }]
+            : number === 151
+              ? [{ name: "type:milestone-control", color: "5319E7" }]
+              : [],
         assignees: [],
         blockedBy: number === 19 ? [{ number: 224, state: "OPEN" }] : [],
       })),
@@ -121,7 +126,7 @@ describe("Qianshou HTTP boundary", () => {
     expect(initialStatus.status).toBe(200);
     const initialPayload = await initialStatus.json();
     expect(initialPayload.issues.map((issue: { number: number }) => issue.number)).toEqual([
-      224, 19, 149,
+      224, 19, 149, 151,
     ]);
     expect(initialPayload.issues[0].slots.reviewerStatus).toBe("LOCKED");
     expect(initialPayload.issues[1].github.blockedBy).toEqual([{ number: 224, state: "OPEN" }]);
@@ -207,6 +212,44 @@ describe("Qianshou HTTP boundary", () => {
     });
     expect(operationWorkspace.status).toBe(409);
     expect(await operationWorkspace.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const operationContract = await fetch(`${baseUrl}/api/issues/149/contract?role=implementer`);
+    expect(operationContract.status).toBe(409);
+    expect(await operationContract.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const operationPhaseWrite = await fetch(`${baseUrl}/api/issues/149/control`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ phase: "CANDIDATE_READY", candidateSha: "abcdef1" }),
+    });
+    expect(operationPhaseWrite.status).toBe(409);
+    expect(await operationPhaseWrite.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const controlImplementation = await fetch(`${baseUrl}/api/issues/151/conversations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "IMPLEMENTATION", engine: "claude" }),
+    });
+    expect(controlImplementation.status).toBe(409);
+    expect(await controlImplementation.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const controlWorkspace = await fetch(`${baseUrl}/api/issues/151/workspace`, {
+      method: "POST",
+    });
+    expect(controlWorkspace.status).toBe(409);
+    expect(await controlWorkspace.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const controlContract = await fetch(`${baseUrl}/api/issues/151/contract?role=implementer`);
+    expect(controlContract.status).toBe(409);
+    expect(await controlContract.json()).toMatchObject({ error: "workflow_not_delivery" });
+
+    const controlPhaseWrite = await fetch(`${baseUrl}/api/issues/151/control`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ phase: "CANDIDATE_READY", candidateSha: "abcdef1" }),
+    });
+    expect(controlPhaseWrite.status).toBe(409);
+    expect(await controlPhaseWrite.json()).toMatchObject({ error: "workflow_not_delivery" });
 
     const blockedControlUpdate = await fetch(`${baseUrl}/api/issues/19/control`, {
       method: "POST",

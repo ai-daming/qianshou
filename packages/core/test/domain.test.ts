@@ -169,6 +169,10 @@ describe("delivery domain", () => {
     });
     expect(action.label).not.toContain("worktree");
     expect(action).toMatchObject({ command: null, shellCommand: null });
+    expect(deriveSlots(control, true, false, "control")).toEqual({
+      developerStatus: "LOCKED",
+      reviewerStatus: "LOCKED",
+    });
   });
 
   it("locks Reviewer until a candidate is frozen", () => {

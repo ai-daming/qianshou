@@ -897,6 +897,13 @@ export async function createQianshouServer(
           sendJson(response, 404, { error: "issue_not_configured" });
           return;
         }
+        if (issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issueNumber} 是 ${issue.kind.toUpperCase()} 工作流，不开放交付状态写入。`,
+          });
+          return;
+        }
         const dependencies = issue.github
           ? dependencyState(issue.github)
           : { ready: false, blockers: [] };
@@ -920,6 +927,13 @@ export async function createQianshouServer(
           return;
         }
         const role = url.searchParams.get("role") === "reviewer" ? "reviewer" : "implementer";
+        if (issue.kind !== "delivery") {
+          sendJson(response, 409, {
+            error: "workflow_not_delivery",
+            message: `#${issue.number} 是 ${issue.kind.toUpperCase()} 工作流，不提供 implementer/reviewer 任务契约。`,
+          });
+          return;
+        }
         if (role === "implementer" && issue.slots.developerStatus === "LOCKED") {
           sendJson(response, 409, {
             error: "implementer_locked",
