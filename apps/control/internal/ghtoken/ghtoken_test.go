@@ -67,3 +67,11 @@ func TestResolveFailsClosedWithoutAnySource(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveRejectsTokenWithInternalWhitespace(t *testing.T) {
+	t.Setenv("GH_TOKEN", "abc def")
+	t.Setenv("GITHUB_TOKEN", "")
+	if _, err := Resolve(context.Background()); err == nil {
+		t.Fatalf("token with internal whitespace must be rejected, not sent as a header")
+	}
+}

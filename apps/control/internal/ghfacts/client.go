@@ -102,18 +102,43 @@ type restIssueLabel struct {
 }
 
 type restIssue struct {
-	Number      int              `json:"number"`
-	Title       string           `json:"title"`
-	State       string           `json:"state"`
-	Labels      []restIssueLabel `json:"labels"`
+	Number      int               `json:"number"`
+	Title       string            `json:"title"`
+	State       string            `json:"state"`
+	Labels      *[]restIssueLabel `json:"labels"`
 	PullRequest *struct {
 		URL string `json:"url"`
 	} `json:"pull_request"`
 }
 
+// validateRestIssue enforces the presence and shape of every fact this package
+// consumes. REST returns lowercase states (open/closed), GraphQL returns
+// uppercase (OPEN/CLOSED); a missing or foreign value is schema drift and
+// fails closed instead of collapsing to a zero value.
+func validateRestItem(item restIssue, expectedNumber int) error {
+	if item.Number <= 0 {
+		return fmt.Errorf("响应项缺少 number（不得折叠为零值）")
+	}
+	if expectedNumber != 0 && item.Number != expectedNumber {
+		return fmt.Errorf("响应是 #%d 的事实，不是请求的 #%d", item.Number, expectedNumber)
+	}
+	if item.State != "open" && item.State != "closed" {
+		return fmt.Errorf("#%d 的 state %q 不是已知的 REST 枚举（open/closed）", item.Number, item.State)
+	}
+	if item.Labels == nil {
+		return fmt.Errorf("#%d 缺少 labels 字段或为 null（不得折叠为无标签）", item.Number)
+	}
+	for _, label := range *item.Labels {
+		if label.Name == "" {
+			return fmt.Errorf("#%d 存在空标签名", item.Number)
+		}
+	}
+	return nil
+}
+
 func (item restIssue) toIssue() Issue {
-	labels := make([]string, 0, len(item.Labels))
-	for _, l := range item.Labels {
+	labels := make([]string, 0, len(*item.Labels))
+	for _, l := range *item.Labels {
 		labels = append(labels, l.Name)
 	}
 	return Issue{Number: item.Number, Title: item.Title, State: item.State, Labels: labels}
@@ -127,6 +152,7 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 		return nil, fmt.Errorf("仓库定位必须是 owner/repo，当前为 %q", slug)
 	}
 	var issues []Issue
+	seen := make(map[int]bool)
 	for page := 1; ; page++ {
 		url := fmt.Sprintf("%s/repos/%s/issues?milestone=%d&state=all&per_page=%d&page=%d",
 			c.restBase, slug, milestone, pageSize, page)
@@ -140,6 +166,19 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 			}
 		}
 		for _, item := range batch {
+			if err := validateRestItem(item, 0); err != nil {
+				return nil, &Error{
+					Op:     OpListMilestoneIssues,
+					Detail: fmt.Sprintf("%s milestone %d 第 %d 页：%v", slug, milestone, page, err),
+				}
+			}
+			if seen[item.Number] {
+				return nil, &Error{
+					Op:     OpListMilestoneIssues,
+					Detail: fmt.Sprintf("%s milestone %d 第 %d 页：#%d 重复出现，响应异常", slug, milestone, page, item.Number),
+				}
+			}
+			seen[item.Number] = true
 			if item.PullRequest != nil {
 				continue
 			}
@@ -169,6 +208,9 @@ func (c *Client) GetIssue(ctx context.Context, slug string, number int) (Issue, 
 	}
 	if item.PullRequest != nil {
 		return Issue{}, &Error{Op: OpGetIssue, Detail: fmt.Sprintf("%s#%d 是 Pull Request，不是 Issue", slug, number)}
+	}
+	if err := validateRestItem(item, number); err != nil {
+		return Issue{}, &Error{Op: OpGetIssue, Detail: fmt.Sprintf("%s#%d：%v", slug, number, err)}
 	}
 	return item.toIssue(), nil
 }
@@ -210,62 +252,68 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 		if page > 0 {
 			variables["after"] = after
 		}
-		issue, cursor, hasNext, err := c.fetchRelationshipsPage(ctx, slug, number, variables)
+		facts, err := c.fetchRelationshipsPage(ctx, slug, number, variables)
 		if err != nil {
 			return Relationships{}, err
 		}
-		if page == 0 && issue.Parent != nil {
-			parent := issue.Parent.Number
-			rel.Parent = &parent
+		if page == 0 {
+			rel.Parent = facts.parent
 		}
-		for _, node := range *issue.BlockedBy.Nodes {
-			rel.BlockedBy = append(rel.BlockedBy, BlockedIssue(node))
-		}
-		if !hasNext {
+		rel.BlockedBy = append(rel.BlockedBy, facts.nodes...)
+		if !facts.hasNext {
 			return rel, nil
 		}
-		after = cursor
+		after = facts.endCursor
 	}
 }
 
+// relationshipPage decodes presence-aware: a missing parent field stays a nil
+// RawMessage (distinct from explicit null), a missing hasNextPage stays a nil
+// bool (distinct from false), and null node elements stay nil pointers.
+// fetchRelationshipsPage validates all of it and returns normalized facts.
 type relationshipPage struct {
-	Parent *struct {
-		Number int `json:"number"`
-	} `json:"parent"`
+	Parent    json.RawMessage `json:"parent"`
 	BlockedBy *struct {
 		PageInfo *struct {
-			HasNextPage bool   `json:"hasNextPage"`
+			HasNextPage *bool  `json:"hasNextPage"`
 			EndCursor   string `json:"endCursor"`
 		} `json:"pageInfo"`
-		Nodes *[]struct {
+		Nodes *[]*struct {
 			Number int    `json:"number"`
 			State  string `json:"state"`
 		} `json:"nodes"`
 	} `json:"blockedBy"`
 }
 
-func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number int, variables map[string]any) (relationshipPage, string, bool, error) {
-	var zero relationshipPage
+type pageFacts struct {
+	parent    *int
+	nodes     []BlockedIssue
+	hasNext   bool
+	endCursor string
+}
+
+func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number int, variables map[string]any) (pageFacts, error) {
+	var zero pageFacts
 	payload, err := json.Marshal(map[string]any{"query": relationshipsQuery, "variables": variables})
 	if err != nil {
-		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.gqlURL, bytes.NewReader(payload))
 	if err != nil {
-		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
 	c.authorize(req)
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d（status %d）", slug, number, resp.StatusCode), Err: err}
+		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d（status %d）", slug, number, resp.StatusCode), Err: err}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return zero, "", false, &Error{
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d（status %d）：%s", slug, number, resp.StatusCode, snippet(body)),
 		}
@@ -281,7 +329,7 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &gql); err != nil {
-		return zero, "", false, &Error{
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：响应不是合法 JSON", slug, number),
 			Err:    err,
@@ -292,43 +340,101 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 		for _, e := range gql.Errors {
 			msgs = append(msgs, e.Message)
 		}
-		return zero, "", false, &Error{
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：GraphQL 错误：%s", slug, number, strings.Join(msgs, "；")),
 		}
 	}
 	issue := gql.Data.Repository.Issue
 	if issue == nil {
-		return zero, "", false, &Error{
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：Issue 或仓库不存在（缺失事实不得解释为无依赖）", slug, number),
 		}
 	}
-	if issue.BlockedBy == nil {
-		return zero, "", false, &Error{
+	blockedBy := issue.BlockedBy
+	if blockedBy == nil {
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少 blockedBy 字段（不得解释为无依赖）", slug, number),
 		}
 	}
-	if issue.BlockedBy.PageInfo == nil {
-		return zero, "", false, &Error{
+	if blockedBy.PageInfo == nil {
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少 blockedBy.pageInfo（不得解释为无依赖）", slug, number),
 		}
 	}
-	if issue.BlockedBy.Nodes == nil {
-		return zero, "", false, &Error{
+	if blockedBy.PageInfo.HasNextPage == nil {
+		return zero, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：blockedBy.pageInfo 缺少 hasNextPage 或为 null（不得按 false 折叠）", slug, number),
+		}
+	}
+	if blockedBy.Nodes == nil {
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少或置 null blockedBy.nodes（不得解释为无依赖）", slug, number),
 		}
 	}
-	if issue.BlockedBy.PageInfo.HasNextPage && issue.BlockedBy.PageInfo.EndCursor == "" {
-		return zero, "", false, &Error{
+
+	// parent must be present; explicit null means "no parent", a missing
+	// field means the response is not the schema we asked for.
+	var parent *int
+	if len(issue.Parent) == 0 {
+		return zero, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少 parent 字段（缺失与 null 是不同事实）", slug, number),
+		}
+	}
+	if string(issue.Parent) != "null" {
+		var decoded struct {
+			Number int `json:"number"`
+		}
+		if err := json.Unmarshal(issue.Parent, &decoded); err != nil || decoded.Number <= 0 {
+			return zero, &Error{
+				Op:     OpFetchRelationships,
+				Detail: fmt.Sprintf("%s#%d：parent 事实不完整（number 缺失或非正数）", slug, number),
+			}
+		}
+		parent = &decoded.Number
+	}
+
+	nodes := make([]BlockedIssue, 0, len(*blockedBy.Nodes))
+	for _, node := range *blockedBy.Nodes {
+		if node == nil {
+			return zero, &Error{
+				Op:     OpFetchRelationships,
+				Detail: fmt.Sprintf("%s#%d：blockedBy.nodes 含 null 元素（不得折叠为零值依赖）", slug, number),
+			}
+		}
+		if node.Number <= 0 {
+			return zero, &Error{
+				Op:     OpFetchRelationships,
+				Detail: fmt.Sprintf("%s#%d：blockedBy 依赖缺少 number（不得折叠为零值）", slug, number),
+			}
+		}
+		if node.State != "OPEN" && node.State != "CLOSED" {
+			return zero, &Error{
+				Op:     OpFetchRelationships,
+				Detail: fmt.Sprintf("%s#%d：依赖 #%d 的 state %q 不是已知的 GraphQL 枚举（OPEN/CLOSED）", slug, number, node.Number, node.State),
+			}
+		}
+		nodes = append(nodes, BlockedIssue{Number: node.Number, State: node.State})
+	}
+
+	if *blockedBy.PageInfo.HasNextPage && blockedBy.PageInfo.EndCursor == "" {
+		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：hasNextPage 为 true 但缺少 endCursor，无法继续分页（不得截断为无更多依赖）", slug, number),
 		}
 	}
-	return *issue, issue.BlockedBy.PageInfo.EndCursor, issue.BlockedBy.PageInfo.HasNextPage, nil
+	return pageFacts{
+		parent:    parent,
+		nodes:     nodes,
+		hasNext:   *blockedBy.PageInfo.HasNextPage,
+		endCursor: blockedBy.PageInfo.EndCursor,
+	}, nil
 }
 
 func (c *Client) authorize(req *http.Request) {

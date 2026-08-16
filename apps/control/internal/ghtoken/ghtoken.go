@@ -17,6 +17,9 @@ import (
 func Resolve(ctx context.Context) (string, error) {
 	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			if err := validateTokenShape(value); err != nil {
+				return "", fmt.Errorf("%s=%w", key, err)
+			}
 			return value, nil
 		}
 	}
@@ -35,7 +38,20 @@ func Resolve(ctx context.Context) (string, error) {
 		if token == "" {
 			return "", fmt.Errorf("gh auth token 输出为空：gh 未登录")
 		}
+		if err := validateTokenShape(token); err != nil {
+			return "", fmt.Errorf("gh auth token %w", err)
+		}
 		return token, nil
 	}
 	return "", fmt.Errorf("找不到 GitHub 凭据：已尝试 GH_TOKEN、GITHUB_TOKEN、gh auth token（PATH 中无 gh）")
+}
+
+// validateTokenShape rejects tokens that still carry whitespace or control
+// characters after trimming: such a value is not a credential but a broken
+// environment, and sending it as a header would only obscure the failure.
+func validateTokenShape(token string) error {
+	if strings.ContainsAny(token, " \t\r\n\x00") {
+		return fmt.Errorf("包含空白或控制字符，不是合法凭据形状")
+	}
+	return nil
 }

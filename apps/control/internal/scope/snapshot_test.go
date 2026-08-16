@@ -179,3 +179,22 @@ func TestFromMilestoneBuildsSnapshotFromAllFacts(t *testing.T) {
 		t.Fatalf("scope id = %q", snap.ScopeID)
 	}
 }
+
+func TestFromMilestoneFailsClosedOnRelationshipNumberMismatch(t *testing.T) {
+	stub := stubFacts{
+		issues: []ghfacts.Issue{issue(5, "workflow:delivery", "type:technical", "rigor:standard")},
+		rels:   map[int]ghfacts.Relationships{5: rel(6, nil)}, // claims facts about #6
+	}
+	if _, err := FromMilestone(context.Background(), stub, "o/r", 1, "m1"); err == nil {
+		t.Fatalf("relationships for another issue accepted")
+	}
+}
+
+func TestBuildFailsClosedOnDuplicateIssueNumbers(t *testing.T) {
+	dup := issue(5, "workflow:delivery", "type:technical", "rigor:standard")
+	issues := []ghfacts.Issue{dup, dup}
+	rels := map[int]ghfacts.Relationships{5: rel(5, nil)}
+	if _, err := Build("m1", issues, rels); err == nil {
+		t.Fatalf("duplicate issue numbers accepted as two work items")
+	}
+}

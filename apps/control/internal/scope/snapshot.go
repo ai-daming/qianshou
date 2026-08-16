@@ -91,10 +91,18 @@ type Facts interface {
 func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relationships) (*Snapshot, error) {
 	snap := &Snapshot{ScopeID: scopeID, Mode: ModeFlat}
 	var controlIssues []int
+	seen := make(map[int]bool, len(issues))
 	for _, src := range issues {
+		if seen[src.Number] {
+			return nil, fmt.Errorf("事实异常：#%d 在成员列表中重复出现", src.Number)
+		}
+		seen[src.Number] = true
 		r, ok := rels[src.Number]
 		if !ok {
 			return nil, fmt.Errorf("依赖事实不完整：#%d 缺少父级/Blocked by 事实，缺失不得解释为无依赖", src.Number)
+		}
+		if r.Number != src.Number {
+			return nil, fmt.Errorf("事实错位：请求 #%d 的关系却得到 #%d 的（不得拼装成同一事实）", src.Number, r.Number)
 		}
 		item := Item{
 			Number:         src.Number,
@@ -142,6 +150,9 @@ func FromMilestone(ctx context.Context, facts Facts, slug string, milestone int,
 		r, err := facts.Relationships(ctx, slug, src.Number)
 		if err != nil {
 			return nil, fmt.Errorf("读取 #%d 的父级/依赖关系失败（部分事实不得降级为无依赖）：%w", src.Number, err)
+		}
+		if r.Number != src.Number {
+			return nil, fmt.Errorf("读取 #%d 的关系却返回 #%d 的（不得拼装成同一事实）", src.Number, r.Number)
 		}
 		rels[src.Number] = r
 	}

@@ -327,3 +327,91 @@ func TestRelationshipsFailsClosedWhenNextPageLacksCursor(t *testing.T) {
 		t.Fatalf("hasNextPage without endCursor cannot continue pagination and must fail closed")
 	}
 }
+
+// --- Round 3 + same-class sweep: presence-aware decoding everywhere ---
+
+func TestRelationshipsFailsClosedOnPresenceDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"parent field missing", `{"data":{"repository":{"issue":{"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
+		{"parent object without number", `{"data":{"repository":{"issue":{"parent":{},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
+		{"parent number zero", `{"data":{"repository":{"issue":{"parent":{"number":0},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
+		{"hasNextPage missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"endCursor":"c"},"nodes":[]}}}}}`},
+		{"hasNextPage null", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}`},
+		{"null node element", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[null]}}}}}`},
+		{"empty node object", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{}]}}}}}`},
+		{"node number zero", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":0,"state":"OPEN"}]}}}}}`},
+		{"node state lowercase from graphql", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"open"}]}}}}}`},
+		{"node state unknown enum", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"MERGED"}]}}}}}`},
+		{"node state missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9}]}}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, tc.body)
+			})
+			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+				t.Fatalf("presence drift accepted: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestRelationshipsAcceptsExplicitNullParent(t *testing.T) {
+	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+	})
+	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4)
+	if err != nil {
+		t.Fatalf("explicit null parent is legal: %v", err)
+	}
+	if rel.Parent != nil || len(rel.BlockedBy) != 0 {
+		t.Fatalf("unexpected facts: %+v", rel)
+	}
+}
+
+func TestListMilestoneIssuesFailsClosedOnItemDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		item string
+	}{
+		{"number missing", `{"title":"x","state":"open","labels":[]}`},
+		{"state missing", `{"number":1,"title":"x","labels":[]}`},
+		{"state graphql-cased", `{"number":1,"title":"x","state":"OPEN","labels":[]}`},
+		{"state unknown", `{"number":1,"title":"x","state":"draft","labels":[]}`},
+		{"labels missing", `{"number":1,"title":"x","state":"open"}`},
+		{"labels null", `{"number":1,"title":"x","state":"open","labels":null}`},
+		{"label name empty", `{"number":1,"title":"x","state":"open","labels":[{"name":""}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, "["+tc.item+"]")
+			}, nil)
+			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+				t.Fatalf("item drift accepted: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestListMilestoneIssuesFailsClosedOnDuplicateNumbers(t *testing.T) {
+	dup := issueItem(7, "workflow:delivery")
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, milestonePage(dup, dup))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("duplicate issue numbers accepted as two facts")
+	}
+}
+
+func TestGetIssueFailsClosedOnNumberMismatch(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, issueItem(99, "workflow:delivery"))
+	}, nil)
+	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("response for #99 accepted as fact for #4")
+	}
+}
