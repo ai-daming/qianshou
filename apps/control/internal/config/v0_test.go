@@ -142,3 +142,10 @@ func TestMigrateV0FailsClosedOnDrift(t *testing.T) {
 		})
 	}
 }
+
+func TestMigrateV0RejectsTrailingSecondDocument(t *testing.T) {
+	dirty := strings.TrimRight(v0Sample, "\n") + "\n{\"projects\":[]}\n"
+	if _, _, err := MigrateV0([]byte(dirty)); err == nil {
+		t.Fatalf("trailing second JSON document must fail closed")
+	}
+}

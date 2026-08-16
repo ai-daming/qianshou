@@ -71,3 +71,23 @@ func TestVerifyGitBindingRejectsMismatchAndMissingRemote(t *testing.T) {
 		t.Fatalf("missing path accepted")
 	}
 }
+
+func TestVerifyGitBindingRejectsNonGitHubHost(t *testing.T) {
+	if !gitAvailable(t) {
+		return
+	}
+	for _, remote := range []string{
+		"https://gitlab.com/ai-daming/qianshou.git",
+		"git@gitlab.com:ai-daming/qianshou.git",
+		"ssh://git@bitbucket.org/ai-daming/qianshou.git",
+	} {
+		dir := initRepoWithRemote(t, remote)
+		err := VerifyGitBinding(dir, "ai-daming/qianshou")
+		if err == nil {
+			t.Fatalf("non-GitHub remote accepted: %s", remote)
+		}
+		if !strings.Contains(err.Error(), "github.com") {
+			t.Fatalf("error should demand github.com: %v", err)
+		}
+	}
+}

@@ -290,3 +290,10 @@ func TestSaveCreatesHomeWithTightPermissionsAndRoundTrips(t *testing.T) {
 		t.Fatalf("round trip lost scope selector")
 	}
 }
+
+func TestParseRejectsTrailingSecondDocument(t *testing.T) {
+	dirty := strings.TrimRight(validConfigJSON, "\n") + "\n{\"version\":2,\"engines\":[],\"projects\":[]}\n"
+	if _, err := parse([]byte(dirty)); err == nil {
+		t.Fatalf("trailing second JSON document must fail closed")
+	}
+}

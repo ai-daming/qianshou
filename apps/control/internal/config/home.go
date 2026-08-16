@@ -31,13 +31,17 @@ func ConfigPath(home string) string { return filepath.Join(home, "config.json") 
 
 // parse strictly decodes configuration bytes. Unknown fields fail closed so
 // copied GitHub facts and legacy role bindings surface immediately instead of
-// drifting beside the contract.
+// drifting beside the contract, and a trailing second JSON document is
+// rejected instead of being silently ignored.
 func parse(data []byte) (*Config, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("配置 JSON 不合法（含未支持字段即失败，配置不得复制 GitHub 事实）：%w", err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("配置 JSON 不合法：第一个文档之后还有额外内容（尾随文档即失败）")
 	}
 	return &cfg, nil
 }

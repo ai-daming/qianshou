@@ -1,8 +1,9 @@
 // Package ghfacts reads issue, milestone, parent/sub-issue, and dependency
 // facts straight from the GitHub REST and GraphQL APIs. GitHub owns those
 // facts; this package only fetches and normalizes them. Every failure mode —
-// transport, status, GraphQL error, malformed body — fails closed: callers
-// never receive a partial fact set that could be misread as "no dependencies".
+// transport, status, GraphQL error, malformed or schema-drifted body — fails
+// closed: callers never receive a partial fact set that could be misread as
+// "no dependencies".
 package ghfacts
 
 import (
@@ -96,16 +97,26 @@ func newClient(token, restBase, gqlURL string, hc *http.Client) (*Client, error)
 	return &Client{restBase: restBase, gqlURL: gqlURL, token: token, hc: hc}, nil
 }
 
+type restIssueLabel struct {
+	Name string `json:"name"`
+}
+
 type restIssue struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	State  string `json:"state"`
-	Labels []struct {
-		Name string `json:"name"`
-	} `json:"labels"`
+	Number      int              `json:"number"`
+	Title       string           `json:"title"`
+	State       string           `json:"state"`
+	Labels      []restIssueLabel `json:"labels"`
 	PullRequest *struct {
 		URL string `json:"url"`
 	} `json:"pull_request"`
+}
+
+func (item restIssue) toIssue() Issue {
+	labels := make([]string, 0, len(item.Labels))
+	for _, l := range item.Labels {
+		labels = append(labels, l.Name)
+	}
+	return Issue{Number: item.Number, Title: item.Title, State: item.State, Labels: labels}
 }
 
 // ListMilestoneIssues returns every issue currently in one GitHub milestone
@@ -132,11 +143,7 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 			if item.PullRequest != nil {
 				continue
 			}
-			labels := make([]string, 0, len(item.Labels))
-			for _, l := range item.Labels {
-				labels = append(labels, l.Name)
-			}
-			issues = append(issues, Issue{Number: item.Number, Title: item.Title, State: item.State, Labels: labels})
+			issues = append(issues, item.toIssue())
 		}
 		if len(batch) < pageSize {
 			return issues, nil
@@ -163,53 +170,102 @@ func (c *Client) GetIssue(ctx context.Context, slug string, number int) (Issue, 
 	if item.PullRequest != nil {
 		return Issue{}, &Error{Op: OpGetIssue, Detail: fmt.Sprintf("%s#%d 是 Pull Request，不是 Issue", slug, number)}
 	}
-	labels := make([]string, 0, len(item.Labels))
-	for _, l := range item.Labels {
-		labels = append(labels, l.Name)
-	}
-	return Issue{Number: item.Number, Title: item.Title, State: item.State, Labels: labels}, nil
+	return item.toIssue(), nil
 }
 
-const relationshipsQuery = `query($owner:String!,$repo:String!,$number:Int!){
+const relationshipsQuery = `query($owner:String!,$repo:String!,$number:Int!,$after:String){
   repository(owner:$owner, name:$repo){
     issue(number:$number){
       parent{ number }
-      blockedBy(first:100){ nodes{ number state } }
+      blockedBy(first:100, after:$after){ pageInfo{ hasNextPage endCursor } nodes{ number state } }
     }
   }
 }`
 
+// maxRelationshipPages guards against a hostile or broken endpoint paging
+// forever; 100 pages already allow 10,000 prerequisites.
+const maxRelationshipPages = 100
+
 // Relationships fetches the native parent and Blocked by facts of one issue.
-// A missing issue or repository is an error, not an empty result: absence of
-// evidence must not be read as absence of dependencies.
+// Blocked by is cursor-paginated: silently truncating after the first page
+// would drop real prerequisites. A missing issue or repository — or a
+// response schema that no longer carries the blockedBy field — is an error,
+// never an empty result: absence of evidence must not be read as absence of
+// dependencies.
 func (c *Client) Relationships(ctx context.Context, slug string, number int) (Relationships, error) {
 	if !slugPattern.MatchString(slug) {
 		return Relationships{}, fmt.Errorf("仓库定位必须是 owner/repo，当前为 %q", slug)
 	}
 	parts := strings.SplitN(slug, "/", 2)
-	payload, err := json.Marshal(map[string]any{
-		"query":     relationshipsQuery,
-		"variables": map[string]any{"owner": parts[0], "repo": parts[1], "number": number},
-	})
+	rel := Relationships{Number: number}
+	after := ""
+	for page := 0; ; page++ {
+		if page >= maxRelationshipPages {
+			return Relationships{}, &Error{
+				Op:     OpFetchRelationships,
+				Detail: fmt.Sprintf("%s#%d：blockedBy 分页超过 %d 页，疑似异常响应", slug, number, maxRelationshipPages),
+			}
+		}
+		variables := map[string]any{"owner": parts[0], "repo": parts[1], "number": number}
+		if page > 0 {
+			variables["after"] = after
+		}
+		issue, cursor, hasNext, err := c.fetchRelationshipsPage(ctx, slug, number, variables)
+		if err != nil {
+			return Relationships{}, err
+		}
+		if page == 0 && issue.Parent != nil {
+			parent := issue.Parent.Number
+			rel.Parent = &parent
+		}
+		for _, node := range issue.BlockedBy.Nodes {
+			rel.BlockedBy = append(rel.BlockedBy, BlockedIssue(node))
+		}
+		if !hasNext {
+			return rel, nil
+		}
+		after = cursor
+	}
+}
+
+type relationshipPage struct {
+	Parent *struct {
+		Number int `json:"number"`
+	} `json:"parent"`
+	BlockedBy *struct {
+		PageInfo struct {
+			HasNextPage bool   `json:"hasNextPage"`
+			EndCursor   string `json:"endCursor"`
+		} `json:"pageInfo"`
+		Nodes []struct {
+			Number int    `json:"number"`
+			State  string `json:"state"`
+		} `json:"nodes"`
+	} `json:"blockedBy"`
+}
+
+func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number int, variables map[string]any) (relationshipPage, string, bool, error) {
+	var zero relationshipPage
+	payload, err := json.Marshal(map[string]any{"query": relationshipsQuery, "variables": variables})
 	if err != nil {
-		return Relationships{}, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.gqlURL, bytes.NewReader(payload))
 	if err != nil {
-		return Relationships{}, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
 	c.authorize(req)
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return Relationships{}, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return Relationships{}, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d（status %d）", slug, number, resp.StatusCode), Err: err}
+		return zero, "", false, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d（status %d）", slug, number, resp.StatusCode), Err: err}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Relationships{}, &Error{
+		return zero, "", false, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d（status %d）：%s", slug, number, resp.StatusCode, snippet(body)),
 		}
@@ -220,22 +276,12 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 		} `json:"errors"`
 		Data struct {
 			Repository struct {
-				Issue *struct {
-					Parent *struct {
-						Number int `json:"number"`
-					} `json:"parent"`
-					BlockedBy struct {
-						Nodes []struct {
-							Number int    `json:"number"`
-							State  string `json:"state"`
-						} `json:"nodes"`
-					} `json:"blockedBy"`
-				} `json:"issue"`
+				Issue *relationshipPage `json:"issue"`
 			} `json:"repository"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &gql); err != nil {
-		return Relationships{}, &Error{
+		return zero, "", false, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：响应不是合法 JSON", slug, number),
 			Err:    err,
@@ -246,27 +292,25 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 		for _, e := range gql.Errors {
 			msgs = append(msgs, e.Message)
 		}
-		return Relationships{}, &Error{
+		return zero, "", false, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：GraphQL 错误：%s", slug, number, strings.Join(msgs, "；")),
 		}
 	}
 	issue := gql.Data.Repository.Issue
 	if issue == nil {
-		return Relationships{}, &Error{
+		return zero, "", false, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：Issue 或仓库不存在（缺失事实不得解释为无依赖）", slug, number),
 		}
 	}
-	rel := Relationships{Number: number}
-	if issue.Parent != nil {
-		parent := issue.Parent.Number
-		rel.Parent = &parent
+	if issue.BlockedBy == nil {
+		return zero, "", false, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少 blockedBy 字段（不得解释为无依赖）", slug, number),
+		}
 	}
-	for _, node := range issue.BlockedBy.Nodes {
-		rel.BlockedBy = append(rel.BlockedBy, BlockedIssue{Number: node.Number, State: node.State})
-	}
-	return rel, nil
+	return *issue, issue.BlockedBy.PageInfo.EndCursor, issue.BlockedBy.PageInfo.HasNextPage, nil
 }
 
 func (c *Client) authorize(req *http.Request) {
@@ -294,7 +338,11 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) (int, error) 
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, fmt.Errorf("HTTP %d：%s", resp.StatusCode, snippet(body))
 	}
-	if err := json.Unmarshal(body, out); err != nil {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return resp.StatusCode, fmt.Errorf("响应体为空或 null（不得解释为空集合）")
+	}
+	if err := json.Unmarshal(trimmed, out); err != nil {
 		return resp.StatusCode, fmt.Errorf("响应不是合法 JSON：%w", err)
 	}
 	return resp.StatusCode, nil

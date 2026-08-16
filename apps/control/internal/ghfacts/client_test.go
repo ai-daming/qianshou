@@ -230,3 +230,68 @@ func TestRelationshipsFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestListMilestoneIssuesFailsClosedOnNullBody(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `null`)
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("null body must fail closed, not read as an empty milestone")
+	}
+}
+
+func TestGetIssueFailsClosedOnNullBody(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `null`)
+	}, nil)
+	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("null body must fail closed, not fabricate an empty issue")
+	}
+}
+
+func TestRelationshipsFailsClosedWhenBlockedBySchemaMissing(t *testing.T) {
+	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null}}}}`)
+	})
+	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("missing blockedBy field must fail closed, not read as no dependencies")
+	}
+}
+
+func TestRelationshipsPaginatesBlockedByBeyondFirstPage(t *testing.T) {
+	pageOneNodes := make([]string, 100)
+	for i := range pageOneNodes {
+		pageOneNodes[i] = fmt.Sprintf(`{"number":%d,"state":"OPEN"}`, i+1)
+	}
+	var cursors []string
+	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables struct {
+				After string `json:"after"`
+			} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		cursors = append(cursors, req.Variables.After)
+		if req.Variables.After == "" {
+			fmt.Fprintf(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"CURSOR-1"},"nodes":[%s]}}}}}`,
+				strings.Join(pageOneNodes, ","))
+			return
+		}
+		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":101,"state":"OPEN"},{"number":102,"state":"CLOSED"}]}}}}}`)
+	})
+	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4)
+	if err != nil {
+		t.Fatalf("Relationships: %v", err)
+	}
+	if len(rel.BlockedBy) != 102 {
+		t.Fatalf("blockedBy = %d items, want 102（first:100 不允许静默截断）", len(rel.BlockedBy))
+	}
+	if rel.BlockedBy[101].Number != 102 || rel.BlockedBy[101].State != "CLOSED" {
+		t.Fatalf("second page not merged in order: %+v", rel.BlockedBy[101])
+	}
+	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "CURSOR-1" {
+		t.Fatalf("pagination cursors wrong: %v", cursors)
+	}
+}
