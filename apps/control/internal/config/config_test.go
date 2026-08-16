@@ -297,3 +297,12 @@ func TestParseRejectsTrailingSecondDocument(t *testing.T) {
 		t.Fatalf("trailing second JSON document must fail closed")
 	}
 }
+
+func TestParseRejectsTrailingGarbage(t *testing.T) {
+	for _, garbage := range []string{"]", "}", "garbage", "null"} {
+		dirty := strings.TrimRight(validConfigJSON, "\n") + "\n" + garbage + "\n"
+		if _, err := parse([]byte(dirty)); err == nil {
+			t.Fatalf("trailing %q must fail closed", garbage)
+		}
+	}
+}

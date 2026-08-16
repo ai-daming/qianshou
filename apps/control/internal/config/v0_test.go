@@ -149,3 +149,12 @@ func TestMigrateV0RejectsTrailingSecondDocument(t *testing.T) {
 		t.Fatalf("trailing second JSON document must fail closed")
 	}
 }
+
+func TestMigrateV0RejectsTrailingGarbage(t *testing.T) {
+	for _, garbage := range []string{"]", "}", "garbage"} {
+		dirty := strings.TrimRight(v0Sample, "\n") + "\n" + garbage + "\n"
+		if _, _, err := MigrateV0([]byte(dirty)); err == nil {
+			t.Fatalf("trailing %q must fail closed", garbage)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -40,8 +41,8 @@ func parse(data []byte) (*Config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("配置 JSON 不合法（含未支持字段即失败，配置不得复制 GitHub 事实）：%w", err)
 	}
-	if dec.More() {
-		return nil, fmt.Errorf("配置 JSON 不合法：第一个文档之后还有额外内容（尾随文档即失败）")
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("配置 JSON 不合法：第一个文档之后还有额外内容（整个文件必须恰好一个 JSON 文档）")
 	}
 	return &cfg, nil
 }

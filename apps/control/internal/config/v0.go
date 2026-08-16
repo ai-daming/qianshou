@@ -3,7 +3,9 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path"
 )
 
@@ -65,8 +67,8 @@ func MigrateV0(data []byte) (*Config, *V0MigrationReport, error) {
 	if err := dec.Decode(&file); err != nil {
 		return nil, nil, fmt.Errorf("V0 配置不合法（含未支持字段即失败）：%w", err)
 	}
-	if dec.More() {
-		return nil, nil, fmt.Errorf("V0 配置不合法：第一个文档之后还有额外内容（尾随文档即失败）")
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, nil, fmt.Errorf("V0 配置不合法：第一个文档之后还有额外内容（整个文件必须恰好一个 JSON 文档）")
 	}
 	if len(file.Projects) == 0 {
 		return nil, nil, fmt.Errorf("V0 配置没有任何 project 条目")

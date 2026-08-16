@@ -141,7 +141,7 @@ func TestListMilestoneIssuesRejectsBadSlugAndEmptyToken(t *testing.T) {
 
 const gqlHappy = `{"data":{"repository":{"issue":{
 	"parent":{"number":1},
-	"blockedBy":{"nodes":[{"number":29,"state":"OPEN"},{"number":3,"state":"CLOSED"}]}
+	"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":29,"state":"OPEN"},{"number":3,"state":"CLOSED"}]}
 }}}}`
 
 func TestRelationshipsParsesParentAndBlockedBy(t *testing.T) {
@@ -184,7 +184,7 @@ func TestRelationshipsParsesParentAndBlockedBy(t *testing.T) {
 
 func TestRelationshipsHandlesNoParentNoDeps(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"nodes":[]}}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	})
 	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 1)
 	if err != nil {
@@ -293,5 +293,37 @@ func TestRelationshipsPaginatesBlockedByBeyondFirstPage(t *testing.T) {
 	}
 	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "CURSOR-1" {
 		t.Fatalf("pagination cursors wrong: %v", cursors)
+	}
+}
+
+func TestRelationshipsFailsClosedWhenInnerSchemaMissing(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"pageInfo missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"nodes":[]}}}}}`},
+		{"pageInfo null", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":null,"nodes":[]}}}}}`},
+		{"nodes missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false}}}}}}`},
+		{"nodes null", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":null}}}}}`},
+		{"empty blockedBy object", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{}}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, tc.body)
+			})
+			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+				t.Fatalf("inner schema drift accepted as no dependencies: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestRelationshipsFailsClosedWhenNextPageLacksCursor(t *testing.T) {
+	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":""},"nodes":[]}}}}}`)
+	})
+	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("hasNextPage without endCursor cannot continue pagination and must fail closed")
 	}
 }

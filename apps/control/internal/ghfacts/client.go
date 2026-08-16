@@ -218,7 +218,7 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 			parent := issue.Parent.Number
 			rel.Parent = &parent
 		}
-		for _, node := range issue.BlockedBy.Nodes {
+		for _, node := range *issue.BlockedBy.Nodes {
 			rel.BlockedBy = append(rel.BlockedBy, BlockedIssue(node))
 		}
 		if !hasNext {
@@ -233,11 +233,11 @@ type relationshipPage struct {
 		Number int `json:"number"`
 	} `json:"parent"`
 	BlockedBy *struct {
-		PageInfo struct {
+		PageInfo *struct {
 			HasNextPage bool   `json:"hasNextPage"`
 			EndCursor   string `json:"endCursor"`
 		} `json:"pageInfo"`
-		Nodes []struct {
+		Nodes *[]struct {
 			Number int    `json:"number"`
 			State  string `json:"state"`
 		} `json:"nodes"`
@@ -308,6 +308,24 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 		return zero, "", false, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少 blockedBy 字段（不得解释为无依赖）", slug, number),
+		}
+	}
+	if issue.BlockedBy.PageInfo == nil {
+		return zero, "", false, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少 blockedBy.pageInfo（不得解释为无依赖）", slug, number),
+		}
+	}
+	if issue.BlockedBy.Nodes == nil {
+		return zero, "", false, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：响应 schema 缺少或置 null blockedBy.nodes（不得解释为无依赖）", slug, number),
+		}
+	}
+	if issue.BlockedBy.PageInfo.HasNextPage && issue.BlockedBy.PageInfo.EndCursor == "" {
+		return zero, "", false, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：hasNextPage 为 true 但缺少 endCursor，无法继续分页（不得截断为无更多依赖）", slug, number),
 		}
 	}
 	return *issue, issue.BlockedBy.PageInfo.EndCursor, issue.BlockedBy.PageInfo.HasNextPage, nil
