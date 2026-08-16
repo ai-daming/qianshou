@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ai-daming/qianshou/apps/control/internal/configcli"
 	"github.com/ai-daming/qianshou/apps/control/internal/runner"
 	"github.com/ai-daming/qianshou/apps/control/internal/server"
 )
@@ -22,6 +23,11 @@ func main() {
 	case "serve":
 		if err := server.Serve(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "serve:", err)
+			os.Exit(1)
+		}
+	case "config":
+		if err := configcli.Run(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "config:", err)
 			os.Exit(1)
 		}
 	case "run":
@@ -38,5 +44,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: qianshou <serve|run> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: qianshou <serve|run|config> [flags]")
 }
