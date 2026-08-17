@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -136,6 +137,11 @@ const (
 	defaultGqlURL   = "https://api.github.com/graphql"
 	apiVersion      = "2022-11-28"
 	pageSize        = 100
+	restBodyLimit   = 4 << 20
+	gqlBodyLimit    = 1 << 20
+	// maxRestListPages caps the Link-driven listing loop, mirroring the
+	// GraphQL-side maxRelationshipPages guard.
+	maxRestListPages = 100
 )
 
 var slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -212,15 +218,21 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 	}
 	var issues []Issue
 	seen := make(map[int]bool)
+	nextURL := fmt.Sprintf("%s/repos/%s/issues?milestone=%d&state=all&per_page=%d&page=1",
+		c.restBase, slug, milestone, pageSize)
 	for page := 1; ; page++ {
-		url := fmt.Sprintf("%s/repos/%s/issues?milestone=%d&state=all&per_page=%d&page=%d",
-			c.restBase, slug, milestone, pageSize, page)
+		if page > maxRestListPages {
+			return nil, &Error{
+				Op:     OpListMilestoneIssues,
+				Detail: fmt.Sprintf("%s milestone %d：分页超过 %d 页仍未结束，疑似异常响应", slug, milestone, maxRestListPages),
+			}
+		}
 		var batch []restIssue
-		status, err := c.getJSON(ctx, url, &batch)
+		header, err := c.fetchJSON(ctx, nextURL, restBodyLimit, &batch)
 		if err != nil {
 			return nil, &Error{
 				Op:     OpListMilestoneIssues,
-				Detail: fmt.Sprintf("%s milestone %d 第 %d 页（status %d）", slug, milestone, page, status),
+				Detail: fmt.Sprintf("%s milestone %d 第 %d 页：%v", slug, milestone, page, err),
 				Err:    err,
 			}
 		}
@@ -243,9 +255,17 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 			}
 			issues = append(issues, item.toIssue())
 		}
-		if len(batch) < pageSize {
+		next, err := nextLink(header.Get("Link"), c.restBase)
+		if err != nil {
+			return nil, &Error{
+				Op:     OpListMilestoneIssues,
+				Detail: fmt.Sprintf("%s milestone %d 第 %d 页：%v", slug, milestone, page, err),
+			}
+		}
+		if next == "" {
 			return issues, nil
 		}
+		nextURL = next
 	}
 }
 
@@ -255,13 +275,12 @@ func (c *Client) GetIssue(ctx context.Context, slug string, number int) (Issue, 
 	if !slugPattern.MatchString(slug) {
 		return Issue{}, fmt.Errorf("仓库定位必须是 owner/repo，当前为 %q", slug)
 	}
-	url := fmt.Sprintf("%s/repos/%s/issues/%d", c.restBase, slug, number)
+	target := fmt.Sprintf("%s/repos/%s/issues/%d", c.restBase, slug, number)
 	var item restIssue
-	status, err := c.getJSON(ctx, url, &item)
-	if err != nil {
+	if _, err := c.fetchJSON(ctx, target, restBodyLimit, &item); err != nil {
 		return Issue{}, &Error{
 			Op:     OpGetIssue,
-			Detail: fmt.Sprintf("%s#%d（status %d）", slug, number, status),
+			Detail: fmt.Sprintf("%s#%d：%v", slug, number, err),
 			Err:    err,
 		}
 	}
@@ -404,24 +423,15 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 	if err != nil {
 		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.gqlURL, bytes.NewReader(payload))
+	res, err := c.readResponse(ctx, http.MethodPost, c.gqlURL, bytes.NewReader(payload), gqlBodyLimit)
 	if err != nil {
-		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
+		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d：%v", slug, number, err), Err: err}
 	}
-	c.authorize(req)
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d", slug, number), Err: err}
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return zero, &Error{Op: OpFetchRelationships, Detail: fmt.Sprintf("%s#%d（status %d）", slug, number, resp.StatusCode), Err: err}
-	}
-	if resp.StatusCode != http.StatusOK {
+	body := res.body
+	if res.status != http.StatusOK {
 		return zero, &Error{
 			Op:     OpFetchRelationships,
-			Detail: fmt.Sprintf("%s#%d（status %d）：%s", slug, number, resp.StatusCode, snippet(body)),
+			Detail: fmt.Sprintf("%s#%d（status %d）：%s", slug, number, res.status, snippet(body)),
 		}
 	}
 	var gql struct {
@@ -538,33 +548,106 @@ func (c *Client) authorize(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 }
 
-func (c *Client) getJSON(ctx context.Context, url string, out any) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// httpResponse is the transport envelope: the only shape through which a
+// response body may reach JSON decoding. Every transport-integrity conjunct
+// is decided here and nowhere else — deadline, size limit, and content type.
+type httpResponse struct {
+	status int
+	body   []byte
+	header http.Header
+}
+
+// readResponse performs one request and owns all transport integrity. It
+// reads limit+1 bytes so an oversized response is an error instead of a
+// silently truncated prefix that may still parse as valid JSON, and a 200
+// body that is not application/json is rejected so proxy error pages can
+// never be decoded into facts.
+func (c *Client) readResponse(ctx context.Context, method, url string, body io.Reader, limit int64) (httpResponse, error) {
+	if c.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return 0, err
+		return httpResponse{}, err
 	}
 	c.authorize(req)
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return 0, err
+		return httpResponse{}, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return resp.StatusCode, err
+		return httpResponse{status: resp.StatusCode, header: resp.Header}, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, fmt.Errorf("HTTP %d：%s", resp.StatusCode, snippet(body))
+	if int64(len(raw)) > limit {
+		return httpResponse{status: resp.StatusCode, header: resp.Header},
+			fmt.Errorf("响应超过 %d 字节上限（截断出的合法前缀不得解释为完整事实）", limit)
 	}
-	trimmed := bytes.TrimSpace(body)
+	if resp.StatusCode == http.StatusOK {
+		ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+		if !strings.HasPrefix(ct, "application/json") {
+			return httpResponse{status: resp.StatusCode, header: resp.Header},
+				fmt.Errorf("Content-Type %q 不是 application/json（错误页或代理响应不得解释为事实）", resp.Header.Get("Content-Type"))
+		}
+	}
+	return httpResponse{status: resp.StatusCode, body: raw, header: resp.Header}, nil
+}
+
+func (c *Client) fetchJSON(ctx context.Context, url string, limit int64, out any) (http.Header, error) {
+	res, err := c.readResponse(ctx, http.MethodGet, url, nil, limit)
+	if err != nil {
+		return nil, err
+	}
+	if res.status != http.StatusOK {
+		return res.header, fmt.Errorf("HTTP %d：%s", res.status, snippet(res.body))
+	}
+	trimmed := bytes.TrimSpace(res.body)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return resp.StatusCode, fmt.Errorf("响应体为空或 null（不得解释为空集合）")
+		return res.header, fmt.Errorf("响应体为空或 null（不得解释为空集合）")
 	}
 	if err := json.Unmarshal(trimmed, out); err != nil {
-		return resp.StatusCode, fmt.Errorf("响应不是合法 JSON：%w", err)
+		return res.header, fmt.Errorf("响应不是合法 JSON：%w", err)
 	}
-	return resp.StatusCode, nil
+	return res.header, nil
 }
+
+// nextLink extracts the rel="next" page URL from a Link header. Termination
+// is protocol-driven: no rel=next means the listing is complete; a Link
+// header that cannot be parsed, or a next page on a different origin than
+// the API base, fails closed — the borrowed token must never leave the API
+// origin, and a server's "more pages" signal must not be ignored.
+func nextLink(link, base string) (string, error) {
+	if strings.TrimSpace(link) == "" {
+		return "", nil
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("API base 不可解析：%w", err)
+	}
+	for _, segment := range strings.Split(link, ",") {
+		m := linkSegment.FindStringSubmatch(segment)
+		if m == nil {
+			return "", fmt.Errorf("Link 头存在但不可解析：%q（不得静默忽略分页信号）", strings.TrimSpace(segment))
+		}
+		if m[2] != "next" {
+			continue
+		}
+		next, err := url.Parse(m[1])
+		if err != nil || next.Scheme == "" || next.Host == "" {
+			return "", fmt.Errorf("Link rel=next 的 URL 不可解析：%q", m[1])
+		}
+		if next.Scheme != baseURL.Scheme || next.Host != baseURL.Host {
+			return "", fmt.Errorf("拒绝跨源下一页 %s://%s（凭据不得离开 %s://%s）", next.Scheme, next.Host, baseURL.Scheme, baseURL.Host)
+		}
+		return next.String(), nil
+	}
+	return "", nil
+}
+
+var linkSegment = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="?([a-zA-Z]+)"?`)
 
 func snippet(body []byte) string {
 	s := strings.TrimSpace(string(body))

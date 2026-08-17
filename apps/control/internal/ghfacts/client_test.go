@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,7 @@ func TestListMilestoneIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			if r.URL.Query().Get("page") == "1" {
+				w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="next"`, r.Host, r.URL.Path))
 				fmt.Fprint(w, milestonePage(full...))
 				return
 			}
@@ -664,5 +666,29 @@ func TestNonJSONContentTypeFailsClosed(t *testing.T) {
 	})
 	if _, err := gqlC.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
 		t.Fatalf("GraphQL 200 + text/html accepted as facts")
+	}
+}
+
+func TestListMilestoneIssuesFailsClosedOnUnboundedPagination(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		page := r.URL.Query().Get("page")
+		if page == "" {
+			page = "1"
+		}
+		n, err := strconv.Atoi(page)
+		if err != nil {
+			t.Errorf("bad page param: %v", err)
+			return
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=%d>; rel="next"`, r.Host, r.URL.Path, n+1))
+		full := make([]string, pageSize)
+		for i := range full {
+			full[i] = issueItem((n-1)*pageSize + i + 1)
+		}
+		fmt.Fprint(w, milestonePage(full...))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("endless next links must hit the page cap, not loop forever")
 	}
 }
