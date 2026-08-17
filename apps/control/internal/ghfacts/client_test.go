@@ -692,3 +692,180 @@ func TestListMilestoneIssuesFailsClosedOnUnboundedPagination(t *testing.T) {
 		t.Fatalf("endless next links must hit the page cap, not loop forever")
 	}
 }
+
+// --- Round 6 falsification set: binding, ambiguity, channel dimensions ---
+
+func TestRedirectsAreRefusedAndTokenNeverLeaves(t *testing.T) {
+	var targetRequests int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, milestonePage(issueItem(77)))
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		http.Redirect(w, r, target.URL+"/repos/ai-daming/qianshou/issues", http.StatusFound)
+	}))
+	defer source.Close()
+	c, err := newClient("test-token", source.URL, source.URL, source.Client())
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("redirected response accepted as facts from the requested origin")
+	}
+	if targetRequests != 0 {
+		t.Fatalf("redirect was followed: credential reached a different origin %d time(s)", targetRequests)
+	}
+}
+
+func TestContentTypeMustBeExactApplicationJSON(t *testing.T) {
+	t.Run("prefix lookalike rejected", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/jsonp")
+			fmt.Fprint(w, "[]")
+		}, nil)
+		if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+			t.Fatalf("application/jsonp accepted as application/json")
+		}
+	})
+	t.Run("charset parameter accepted", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+		}, nil)
+		if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err != nil {
+			t.Fatalf("application/json with charset must pass: %v", err)
+		}
+	})
+}
+
+func TestNextLinkMustStayWithinRequestedScope(t *testing.T) {
+	cases := []struct {
+		name string
+		link string
+		path string
+	}{
+		{
+			name: "same origin, different repository and milestone",
+			link: `<http://%s%s?milestone=999&state=all&per_page=100&page=2>; rel="next"`,
+			path: "/repos/other/repo/issues",
+		},
+		{
+			name: "same endpoint, mutated milestone",
+			link: `<http://%s%s?milestone=999&state=all&per_page=100&page=2>; rel="next"`,
+			path: "/repos/ai-daming/qianshou/issues",
+		},
+		{
+			name: "unexpected extra parameter",
+			link: `<http://%s%s?milestone=1&state=all&per_page=100&page=2&injected=1>; rel="next"`,
+			path: "/repos/ai-daming/qianshou/issues",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+					// the poisoned next link; page two answers without a
+					// further link so only binding, not duplicates, can catch it
+					w.Header().Set("Link", fmt.Sprintf(tc.link, r.Host, tc.path))
+					fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+					return
+				}
+				fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+			}, nil)
+			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+				t.Fatalf("next link escaped the requested scope: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestAllLinkHeaderValuesAreConsidered(t *testing.T) {
+	t.Run("next in second value is followed", func(t *testing.T) {
+		var requests int
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			requests++
+			if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+				w.Header().Add("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=1>; rel="prev"`, r.Host, r.URL.Path))
+				w.Header().Add("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="next"`, r.Host, r.URL.Path))
+				fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+				return
+			}
+			fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+		}, nil)
+		issues, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+		if err != nil {
+			t.Fatalf("ListMilestoneIssues: %v", err)
+		}
+		if requests != 2 || len(issues) != 2 {
+			t.Fatalf("second Link value ignored: requests=%d issues=%d", requests, len(issues))
+		}
+	})
+	t.Run("two next links are ambiguity, not choice", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Add("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="next"`, r.Host, r.URL.Path))
+			w.Header().Add("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=3>; rel="next"`, r.Host, r.URL.Path))
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+		}, nil)
+		if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+			t.Fatalf("contradictory next pages silently resolved by picking one")
+		}
+	})
+}
+
+func TestGraphQLResponseMustEchoRequestedIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "issue number mismatch",
+			body: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":99,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`,
+		},
+		{
+			name: "repository identity mismatch",
+			body: `{"data":{"repository":{"nameWithOwner":"other/repo","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`,
+		},
+		{
+			name: "identity fields missing",
+			body: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, tc.body)
+			})
+			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+				t.Fatalf("response about something else accepted as facts for #4: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestNetworkJSONRejectsDuplicateKeys(t *testing.T) {
+	t.Run("graphql pagination signal", func(t *testing.T) {
+		c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1","hasNextPage":false},"nodes":[]}}}}}`)
+		})
+		if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+			t.Fatalf("duplicate hasNextPage silently resolved by last-wins")
+		}
+	})
+	t.Run("rest item field", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `[{"number":1,"number":2,"title":"x","state":"open","labels":[]}]`)
+		}, nil)
+		if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+			t.Fatalf("duplicate REST field silently resolved by last-wins")
+		}
+	})
+}
