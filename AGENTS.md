@@ -46,7 +46,15 @@ or fail-closed defect:
    closed a cell.
 7. Claim scope must equal tested scope: a claim spanning several sites,
    headers, or exits must cite tests exercising each of them, or be narrowed
-   to what the tests actually cover.
+   to what the tests actually cover. The claim text must track obligation
+   discharge ("contract registered for every root path"), not mechanism
+   invocation ("scanner runs on every exit").
+8. Ask the forger question for every exported fact type: can a consumer
+   construct a value that satisfies validation without having been read?
+   Completeness is provenance, not value shape — it must be carried by the
+   type (unforgeable validated constructors), and deliberate weakenings made
+   for convenience must be registered as weakenings, never written in
+   obligatory language.
 
 See `apps/control/internal/ghfacts/README.md` for the matrix this package
 is governed by.
