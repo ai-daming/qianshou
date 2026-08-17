@@ -198,3 +198,45 @@ func TestBuildFailsClosedOnDuplicateIssueNumbers(t *testing.T) {
 		t.Fatalf("duplicate issue numbers accepted as two work items")
 	}
 }
+
+// --- Round 4: Build must reject invalid facts from any Facts source ---
+
+func TestBuildFailsClosedOnInvalidFactShapes(t *testing.T) {
+	valid := issue(5, "workflow:delivery", "type:technical", "rigor:standard")
+	cases := []struct {
+		name string
+		rels map[int]ghfacts.Relationships
+	}{
+		{
+			name: "reviewer repro zero-number closed blocker",
+			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 0, State: "CLOSED"}}}},
+		},
+		{
+			name: "parent zero",
+			rels: map[int]ghfacts.Relationships{5: {Number: 5, Parent: ptr(0)}},
+		},
+		{
+			name: "blocker state lowercase from graphql source",
+			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "open"}}}},
+		},
+		{
+			name: "duplicate blockers",
+			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}, {Number: 9, State: "OPEN"}}}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Build("m1", []ghfacts.Issue{valid}, tc.rels); err == nil {
+				t.Fatalf("invalid relationship facts accepted: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestBuildFailsClosedOnInvalidIssueFacts(t *testing.T) {
+	bad := ghfacts.Issue{Number: 5, Title: "", State: "open", Labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}}
+	rels := map[int]ghfacts.Relationships{5: rel(5, nil)}
+	if _, err := Build("m1", []ghfacts.Issue{bad}, rels); err == nil {
+		t.Fatalf("invalid issue fact accepted from a replaceable Facts source")
+	}
+}

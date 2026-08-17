@@ -415,3 +415,110 @@ func TestGetIssueFailsClosedOnNumberMismatch(t *testing.T) {
 		t.Fatalf("response for #99 accepted as fact for #4")
 	}
 }
+
+// --- Round 4: unified fact invariants (RED before implementation) ---
+
+func TestListMilestoneIssuesFailsClosedOnTitleDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		item string
+	}{
+		{"title missing", `{"number":1,"state":"open","labels":[]}`},
+		{"title null", `{"number":1,"title":null,"state":"open","labels":[]}`},
+		{"title empty", `{"number":1,"title":"","state":"open","labels":[]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, "["+tc.item+"]")
+			}, nil)
+			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+				t.Fatalf("title drift accepted: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestGetIssueFailsClosedOnTitleDrift(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"number":4,"title":"","state":"open","labels":[]}`)
+	}, nil)
+	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("empty title accepted as a fact for #4")
+	}
+}
+
+func TestListMilestoneIssuesFailsClosedOnDuplicateLabels(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"number":1,"title":"x","state":"open","labels":[{"name":"a"},{"name":"a"}]}]`)
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("duplicate label names accepted as one fact twice")
+	}
+}
+
+func TestRelationshipsFailClosedOnContradictoryPages(t *testing.T) {
+	cases := []struct {
+		name   string
+		pageOne string
+		pageTwo string
+	}{
+		{
+			name:   "parent differs across pages",
+			pageOne: `{"data":{"repository":{"issue":{"parent":{"number":1},"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageTwo: `{"data":{"repository":{"issue":{"parent":{"number":2},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":11,"state":"OPEN"}]}}}}}`,
+		},
+		{
+			name:   "same blocker repeated across pages",
+			pageOne: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageTwo: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+		},
+		{
+			name:   "same blocker with conflicting state",
+			pageOne: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageTwo: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"CLOSED"}]}}}}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			call := 0
+			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				call++
+				if call == 1 {
+					fmt.Fprint(w, tc.pageOne)
+					return
+				}
+				fmt.Fprint(w, tc.pageTwo)
+			})
+			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+				t.Fatalf("contradictory pages merged into a snapshot that never existed: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestRelationshipsFailClosedOnSelfReferences(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "issue is its own parent",
+			body: `{"data":{"repository":{"issue":{"parent":{"number":4},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`,
+		},
+		{
+			name: "issue blocks itself",
+			body: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":4,"state":"OPEN"}]}}}}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, tc.body)
+			})
+			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+				t.Fatalf("self-referential fact accepted: %s", tc.name)
+			}
+		})
+	}
+}

@@ -75,3 +75,13 @@ func TestResolveRejectsTokenWithInternalWhitespace(t *testing.T) {
 		t.Fatalf("token with internal whitespace must be rejected, not sent as a header")
 	}
 }
+
+func TestResolveRejectsControlCharactersInToken(t *testing.T) {
+	for _, dirty := range []string{"abc\vdef", "abc\fdef", "abc\x01def", "abc\x7fdef"} {
+		t.Setenv("GH_TOKEN", dirty)
+		t.Setenv("GITHUB_TOKEN", "")
+		if _, err := Resolve(context.Background()); err == nil {
+			t.Fatalf("token %q accepted", dirty)
+		}
+	}
+}
