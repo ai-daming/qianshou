@@ -56,6 +56,24 @@ type Issue struct {
 	Title  string
 	State  string
 	Labels []string
+
+	// read is the provenance bit: only this package's decoding (or the
+	// validating constructor) sets it. A struct literal from any consumer —
+	// including a Facts implementation — leaves it false, so Validate refuses
+	// values that were never actually read. Value shape cannot prove
+	// completeness; provenance can.
+	read bool
+}
+
+// NewIssue is the only way for a consumer to construct a valid Issue from
+// raw values. It validates and stamps provenance in one step, so an invalid
+// or forged fact cannot exist.
+func NewIssue(number int, title, state string, labels []string) (Issue, error) {
+	issue := Issue{Number: number, Title: title, State: state, Labels: labels, read: true}
+	if err := issue.Validate(); err != nil {
+		return Issue{}, err
+	}
+	return issue, nil
 }
 
 // BlockedIssue is one native Blocked by prerequisite with its current state.
@@ -70,6 +88,21 @@ type Relationships struct {
 	Number    int
 	Parent    *int
 	BlockedBy []BlockedIssue
+
+	// read is the provenance bit (see Issue.read): a zero-value
+	// Relationships must not be distinguishable-from-nothing AND
+	// acceptable-as-evidence at the same time.
+	read bool
+}
+
+// NewRelationships is the only way for a consumer to construct valid
+// relationship facts from raw values; it validates and stamps provenance.
+func NewRelationships(number int, parent *int, blockedBy []BlockedIssue) (Relationships, error) {
+	rel := Relationships{Number: number, Parent: parent, BlockedBy: blockedBy, read: true}
+	if err := rel.Validate(); err != nil {
+		return Relationships{}, err
+	}
+	return rel, nil
 }
 
 // Validate is the unified fact invariant for one observed issue. Every decode
@@ -77,6 +110,9 @@ type Relationships struct {
 // snapshot (scope.Build) reuses it, so no call site can accept a collapsed,
 // contradictory, or self-referential fact set.
 func (i Issue) Validate() error {
+	if !i.read {
+		return fmt.Errorf("Issue #%d 无读取凭证：结构体字面量不构成事实（provenance 不可伪造）", i.Number)
+	}
 	if i.Number <= 0 {
 		return fmt.Errorf("issue 缺少 number（不得折叠为零值）")
 	}
@@ -105,6 +141,9 @@ func (i Issue) Validate() error {
 // zero-number CLOSED blocker is a collapsed fact that would masquerade as a
 // satisfied dependency.
 func (r Relationships) Validate() error {
+	if !r.read {
+		return fmt.Errorf("关系事实 #%d 无读取凭证：结构体字面量不构成事实（provenance 不可伪造）", r.Number)
+	}
 	if r.Number <= 0 {
 		return fmt.Errorf("关系事实缺少所属 Issue 编号")
 	}
@@ -222,13 +261,22 @@ func validateRestItem(item restIssue, expectedNumber int, slug string, requested
 	}
 	// Binding: GitHub echoes repository_url on every issue; a response from
 	// another repository is not a fact about this request even when the
-	// number matches.
+	// number matches. The witness is the canonical public-API identity in
+	// full — scheme, host, path, and the absence of userinfo, query, and
+	// fragment. A same-path foreign host is a different repository.
 	if item.RepositoryURL == nil {
 		return fmt.Errorf("#%d 缺少 repository_url（响应所属仓库不可证）", item.Number)
 	}
 	repoURL, err := url.Parse(*item.RepositoryURL)
-	if err != nil || repoURL.Path != "/repos/"+slug {
-		return fmt.Errorf("#%d 的 repository_url %q 不属于请求的 %s", item.Number, *item.RepositoryURL, slug)
+	if err != nil ||
+		repoURL.Scheme != "https" ||
+		repoURL.Host != "api.github.com" ||
+		repoURL.Path != "/repos/"+slug ||
+		repoURL.User != nil ||
+		repoURL.RawQuery != "" ||
+		repoURL.Fragment != "" {
+		return fmt.Errorf("#%d 的 repository_url %q 不是 %s 的规范 API 身份（异主同名仓库不是同一仓库）",
+			item.Number, *item.RepositoryURL, slug)
 	}
 	// A milestone listing may only contain members of the requested milestone.
 	if requestedMilestone != nil {
@@ -247,7 +295,7 @@ func (item restIssue) toIssue() Issue {
 	for _, l := range *item.Labels {
 		labels = append(labels, l.Name)
 	}
-	return Issue{Number: item.Number, Title: *item.Title, State: item.State, Labels: labels}
+	return Issue{Number: item.Number, Title: *item.Title, State: item.State, Labels: labels, read: true}
 }
 
 // ListMilestoneIssues returns every issue currently in one GitHub milestone
@@ -273,7 +321,7 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 			}
 		}
 		var batch []restIssue
-		header, err := c.fetchJSON(ctx, nextURL, restBodyLimit, &batch)
+		header, err := c.fetchJSON(ctx, nextURL, restBodyLimit, &batch, restListSchema)
 		if err != nil {
 			return nil, &Error{
 				Op:     OpListMilestoneIssues,
@@ -327,7 +375,7 @@ func (c *Client) GetIssue(ctx context.Context, slug string, number int) (Issue, 
 	}
 	target := fmt.Sprintf("%s/repos/%s/issues/%d", c.restBase, slug, number)
 	var item restIssue
-	if _, err := c.fetchJSON(ctx, target, restBodyLimit, &item); err != nil {
+	if _, err := c.fetchJSON(ctx, target, restBodyLimit, &item, restIssueSchema); err != nil {
 		return Issue{}, &Error{
 			Op:     OpGetIssue,
 			Detail: fmt.Sprintf("%s#%d：%v", slug, number, err),
@@ -418,6 +466,7 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 		rel.BlockedBy = append(rel.BlockedBy, facts.nodes...)
 		if !facts.hasNext {
 			rel.Parent = parentValue
+			rel.read = true
 			if err := rel.Validate(); err != nil {
 				return Relationships{}, &Error{
 					Op:     OpFetchRelationships,
@@ -682,7 +731,7 @@ func (c *Client) readResponse(ctx context.Context, method, url string, body io.R
 	return httpResponse{status: resp.StatusCode, body: raw, header: resp.Header}, nil
 }
 
-func (c *Client) fetchJSON(ctx context.Context, url string, limit int64, out any) (http.Header, error) {
+func (c *Client) fetchJSON(ctx context.Context, url string, limit int64, out any, schemaFor func(path string) (map[string]bool, bool)) (http.Header, error) {
 	res, err := c.readResponse(ctx, http.MethodGet, url, nil, limit)
 	if err != nil {
 		return nil, err
@@ -694,7 +743,7 @@ func (c *Client) fetchJSON(ctx context.Context, url string, limit int64, out any
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return res.header, fmt.Errorf("响应体为空或 null（不得解释为空集合）")
 	}
-	if err := scanStrictJSON(trimmed, restItemSchema); err != nil {
+	if err := scanStrictJSON(trimmed, schemaFor); err != nil {
 		return res.header, fmt.Errorf("响应未通过严格 JSON 扫描（外部事实不得静默择一/等价折叠）：%w", err)
 	}
 	if err := json.Unmarshal(trimmed, out); err != nil {
@@ -815,15 +864,35 @@ func gqlResponseSchema(path string) (map[string]bool, bool) {
 	return s, ok
 }
 
-// restItemSchema is the exact-case key contract of REST issue objects.
-func restItemSchema(path string) (map[string]bool, bool) {
+// issueObjectKeys is the exact-case key contract shared by every REST issue
+// object, wherever it appears.
+func issueObjectKeys() map[string]bool {
+	return map[string]bool{"number": true, "title": true, "state": true, "labels": true,
+		"pull_request": true, "repository_url": true, "milestone": true}
+}
+
+// restListSchema is the exact-case contract for milestone listing roots (a
+// JSON array of issue objects).
+func restListSchema(path string) (map[string]bool, bool) {
 	switch path {
 	case "[]":
-		return map[string]bool{"number": true, "title": true, "state": true, "labels": true,
-			"pull_request": true, "repository_url": true, "milestone": true}, true
+		return issueObjectKeys(), true
 	case "[].labels[]":
 		return map[string]bool{"name": true}, true
 	case "[].milestone":
+		return map[string]bool{"number": true}, true
+	}
+	return nil, false
+}
+
+// restIssueSchema is the exact-case contract for a single-issue root object.
+func restIssueSchema(path string) (map[string]bool, bool) {
+	switch path {
+	case "":
+		return issueObjectKeys(), true
+	case "labels[]":
+		return map[string]bool{"name": true}, true
+	case "milestone":
 		return map[string]bool{"number": true}, true
 	}
 	return nil, false
@@ -851,6 +920,9 @@ func boundNextLink(linkValues []string, current *url.URL) (string, error) {
 	for _, value := range linkValues {
 		if strings.TrimSpace(value) == "" {
 			continue
+		}
+		if err := validateQuoteClosure(value); err != nil {
+			return "", err
 		}
 		for _, segment := range splitOutsideQuotes(value, ',') {
 			segment = strings.TrimSpace(segment)
@@ -950,6 +1022,7 @@ func parseLinkValue(segment string) (target string, rels []string, err error) {
 	}
 	target = rest[1:end]
 	rest = rest[end+1:]
+	sawRel := false
 	for _, param := range splitOutsideQuotes(rest, ';') {
 		param = strings.TrimSpace(param)
 		if param == "" {
@@ -964,11 +1037,40 @@ func parseLinkValue(segment string) (target string, rels []string, err error) {
 		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
 			val = val[1 : len(val)-1]
 		}
+		// RFC 8288 §3.3: a parameter must not occur more than once in a
+		// link-value; the first occurrence wins and later ones are ignored —
+		// never the other way round, which would let a trailing rel erase a
+		// parsed next.
 		if strings.EqualFold(key, "rel") {
+			if sawRel {
+				continue
+			}
+			sawRel = true
 			rels = strings.Fields(val)
 		}
 	}
 	return target, rels, nil
+}
+
+// validateQuoteClosure rejects a header value whose quoted strings never
+// close. Without this, an unterminated quote silently swallows every
+// parameter after it and the missing pagination signal reads as termination.
+func validateQuoteClosure(value string) error {
+	quoted, escaped := false, false
+	for _, r := range value {
+		switch {
+		case escaped:
+			escaped = false
+		case quoted && r == '\\':
+			escaped = true
+		case r == '"':
+			quoted = !quoted
+		}
+	}
+	if quoted {
+		return fmt.Errorf("Link 头存在未闭合引号：%q（语法不完整不得解释为没有下一页）", value)
+	}
+	return nil
 }
 
 func derefInt(p *int) int {

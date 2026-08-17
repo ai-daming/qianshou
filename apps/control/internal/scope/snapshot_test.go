@@ -11,11 +11,19 @@ import (
 )
 
 func issue(number int, labels ...string) ghfacts.Issue {
-	return ghfacts.Issue{Number: number, Title: fmt.Sprintf("issue %d", number), State: "open", Labels: labels}
+	item, err := ghfacts.NewIssue(number, fmt.Sprintf("issue %d", number), "open", labels)
+	if err != nil {
+		panic(err)
+	}
+	return item
 }
 
 func rel(number int, parent *int, blocked ...ghfacts.BlockedIssue) ghfacts.Relationships {
-	return ghfacts.Relationships{Number: number, Parent: parent, BlockedBy: blocked}
+	r, err := ghfacts.NewRelationships(number, parent, blocked)
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
 func ptr(n int) *int { return &n }
@@ -208,6 +216,9 @@ func TestBuildFailsClosedOnInvalidFactShapes(t *testing.T) {
 		rels map[int]ghfacts.Relationships
 	}{
 		{
+			// The zero-number CLOSED blocker (reviewer repro) and its siblings
+			// can no longer even be CONSTRUCTED: constructors reject them.
+			// What reaches Build as a literal is rejected at provenance.
 			name: "reviewer repro zero-number closed blocker",
 			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 0, State: "CLOSED"}}}},
 		},
@@ -251,7 +262,7 @@ func TestBuildFailsClosedOnCrossFactStateContradictions(t *testing.T) {
 		}
 		rels := map[int]ghfacts.Relationships{
 			1: rel(1, nil),
-			2: {Number: 2, BlockedBy: []ghfacts.BlockedIssue{{Number: 1, State: "CLOSED"}}},
+			2: rel(2, nil, ghfacts.BlockedIssue{Number: 1, State: "CLOSED"}),
 		}
 		if _, err := Build("m1", issues, rels); err == nil {
 			t.Fatalf("member #1 open vs relationship fact #1 CLOSED merged into one snapshot")
@@ -265,8 +276,8 @@ func TestBuildFailsClosedOnCrossFactStateContradictions(t *testing.T) {
 		}
 		rels := map[int]ghfacts.Relationships{
 			1: rel(1, nil),
-			2: {Number: 2, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}}},
-			3: {Number: 3, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "CLOSED"}}},
+			2: rel(2, nil, ghfacts.BlockedIssue{Number: 9, State: "OPEN"}),
+			3: rel(3, nil, ghfacts.BlockedIssue{Number: 9, State: "CLOSED"}),
 		}
 		if _, err := Build("m1", issues, rels); err == nil {
 			t.Fatalf("blocker #9 reported OPEN and CLOSED by different facts")
@@ -284,5 +295,32 @@ func TestBuildRejectsForgedZeroValueFacts(t *testing.T) {
 	rels := map[int]ghfacts.Relationships{1: {Number: 1}}
 	if _, err := Build("m1", issues, rels); err == nil {
 		t.Fatalf("forged zero-value facts fabricated a complete flat snapshot")
+	}
+}
+
+// Round 8: invalid facts cannot even be constructed — the constructors are
+// the unforgeable boundary, Build's re-validation is defense in depth.
+func TestConstructorsRejectInvalidFacts(t *testing.T) {
+	if _, err := ghfacts.NewRelationships(5, nil, []ghfacts.BlockedIssue{{Number: 0, State: "CLOSED"}}); err == nil {
+		t.Fatalf("zero-number blocker constructible")
+	}
+	if _, err := ghfacts.NewRelationships(5, ptr(0), nil); err == nil {
+		t.Fatalf("zero parent constructible")
+	}
+	if _, err := ghfacts.NewRelationships(5, nil, []ghfacts.BlockedIssue{{Number: 9, State: "open"}}); err == nil {
+		t.Fatalf("lowercase state constructible")
+	}
+	if _, err := ghfacts.NewRelationships(5, nil,
+		[]ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}, {Number: 9, State: "OPEN"}}); err == nil {
+		t.Fatalf("duplicate blockers constructible")
+	}
+	if _, err := ghfacts.NewIssue(5, "", "open", nil); err == nil {
+		t.Fatalf("empty-title issue constructible")
+	}
+	if _, err := ghfacts.NewIssue(5, "x", "OPEN", nil); err == nil {
+		t.Fatalf("graphql-cased state constructible")
+	}
+	if _, err := ghfacts.NewIssue(5, "x", "open", []string{"", "a"}); err == nil {
+		t.Fatalf("empty label constructible")
 	}
 }
