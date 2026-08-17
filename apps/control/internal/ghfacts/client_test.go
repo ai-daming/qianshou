@@ -41,12 +41,12 @@ func issueItem(number int, labels ...string) string {
 	for _, l := range labels {
 		nameObjs = append(nameObjs, fmt.Sprintf(`{"name":%q}`, l))
 	}
-	return fmt.Sprintf(`{"number":%d,"title":"issue %d","state":"open","labels":[%s]}`,
+	return fmt.Sprintf(`{"number":%d,"title":"issue %d","state":"open","labels":[%s],"repository_url":"https://api.github.com/repos/ai-daming/qianshou","milestone":{"number":1}}`,
 		number, number, strings.Join(nameObjs, ","))
 }
 
 func prItem(number int) string {
-	return fmt.Sprintf(`{"number":%d,"title":"pr %d","state":"open","labels":[],"pull_request":{"url":"x"}}`, number, number)
+	return fmt.Sprintf(`{"number":%d,"title":"pr %d","state":"open","labels":[],"repository_url":"https://api.github.com/repos/ai-daming/qianshou","milestone":{"number":1},"pull_request":{"url":"x"}}`, number, number)
 }
 
 func TestListMilestoneIssuesPaginatesAndFiltersPullRequests(t *testing.T) {

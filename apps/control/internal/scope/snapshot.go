@@ -92,6 +92,7 @@ func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relation
 	snap := &Snapshot{ScopeID: scopeID, Mode: ModeFlat}
 	var controlIssues []int
 	seen := make(map[int]bool, len(issues))
+	issueStates := make(map[int]string, len(issues))
 	for _, src := range issues {
 		if seen[src.Number] {
 			return nil, fmt.Errorf("事实异常：#%d 在成员列表中重复出现", src.Number)
@@ -112,6 +113,28 @@ func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relation
 		}
 		if err := r.Validate(); err != nil {
 			return nil, fmt.Errorf("关系事实无效（#%d）：%w", src.Number, err)
+		}
+		// Freshness as detectable consistency: the same issue may appear as a
+		// member and as a blocker elsewhere (and be reported by several
+		// referrers). Already-obtained facts must agree on its state; a
+		// contradiction is not staleness to tolerate but a fact set that never
+		// coexisted. Truly undetectable cross-request atomicity stays a
+		// registered residual.
+		recordState := func(number int, state string) error {
+			normalized := strings.ToLower(state)
+			if prev, ok := issueStates[number]; ok && prev != normalized {
+				return fmt.Errorf("同一 Issue #%d 的状态在不同事实中矛盾（%s ↔ %s）", number, prev, normalized)
+			}
+			issueStates[number] = normalized
+			return nil
+		}
+		if err := recordState(src.Number, src.State); err != nil {
+			return nil, err
+		}
+		for _, ref := range r.BlockedBy {
+			if err := recordState(ref.Number, ref.State); err != nil {
+				return nil, err
+			}
 		}
 		item := Item{
 			Number:         src.Number,
