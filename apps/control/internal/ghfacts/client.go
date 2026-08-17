@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Op identifies the failing operation in an Error.
@@ -141,10 +142,11 @@ var slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // Client reads GitHub facts with one borrowed token.
 type Client struct {
-	restBase string
-	gqlURL   string
-	token    string
-	hc       *http.Client
+	restBase       string
+	gqlURL         string
+	token          string
+	hc             *http.Client
+	requestTimeout time.Duration
 }
 
 // New returns a client against the public GitHub API. An empty token fails
@@ -157,7 +159,7 @@ func newClient(token, restBase, gqlURL string, hc *http.Client) (*Client, error)
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("ghfacts 需要 GitHub 凭据：空 token 会把读取失败伪装成空事实，必须 fail closed")
 	}
-	return &Client{restBase: restBase, gqlURL: gqlURL, token: token, hc: hc}, nil
+	return &Client{restBase: restBase, gqlURL: gqlURL, token: token, hc: hc, requestTimeout: 30 * time.Second}, nil
 }
 
 type restIssueLabel struct {

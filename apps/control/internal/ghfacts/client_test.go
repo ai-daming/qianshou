@@ -1,6 +1,7 @@
 package ghfacts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func asError(err error, target **Error) bool { return errors.As(err, target) }
@@ -55,6 +57,7 @@ func TestListMilestoneIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 	var requests int
 	c := newTestClient(t,
 		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
 			requests++
 			if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 				t.Errorf("Authorization = %q", got)
@@ -103,6 +106,7 @@ func TestListMilestoneIssuesFailsClosed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
 				fmt.Fprint(w, tc.body)
 			}, nil)
@@ -129,6 +133,7 @@ func TestListMilestoneIssuesFailsClosed(t *testing.T) {
 
 func TestListMilestoneIssuesRejectsBadSlugAndEmptyToken(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		t.Errorf("no request expected")
 	}, nil)
 	if _, err := c.ListMilestoneIssues(context.Background(), "no-slash", 1); err == nil {
@@ -149,6 +154,7 @@ func TestRelationshipsParsesParentAndBlockedBy(t *testing.T) {
 	c := newTestClient(t,
 		func(w http.ResponseWriter, r *http.Request) { t.Errorf("unexpected REST call") },
 		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
 			sawAuth = r.Header.Get("Authorization") == "Bearer test-token"
 			var req struct {
 				Query     string `json:"query"`
@@ -184,6 +190,7 @@ func TestRelationshipsParsesParentAndBlockedBy(t *testing.T) {
 
 func TestRelationshipsHandlesNoParentNoDeps(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	})
 	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 1)
@@ -210,6 +217,7 @@ func TestRelationshipsFailsClosed(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
 				fmt.Fprint(w, tc.body)
 			})
@@ -233,6 +241,7 @@ func TestRelationshipsFailsClosed(t *testing.T) {
 
 func TestListMilestoneIssuesFailsClosedOnNullBody(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `null`)
 	}, nil)
 	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
@@ -242,6 +251,7 @@ func TestListMilestoneIssuesFailsClosedOnNullBody(t *testing.T) {
 
 func TestGetIssueFailsClosedOnNullBody(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `null`)
 	}, nil)
 	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -251,6 +261,7 @@ func TestGetIssueFailsClosedOnNullBody(t *testing.T) {
 
 func TestRelationshipsFailsClosedWhenBlockedBySchemaMissing(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null}}}}`)
 	})
 	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -265,6 +276,7 @@ func TestRelationshipsPaginatesBlockedByBeyondFirstPage(t *testing.T) {
 	}
 	var cursors []string
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		var req struct {
 			Variables struct {
 				After string `json:"after"`
@@ -310,6 +322,7 @@ func TestRelationshipsFailsClosedWhenInnerSchemaMissing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, tc.body)
 			})
 			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -321,6 +334,7 @@ func TestRelationshipsFailsClosedWhenInnerSchemaMissing(t *testing.T) {
 
 func TestRelationshipsFailsClosedWhenNextPageLacksCursor(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":""},"nodes":[]}}}}}`)
 	})
 	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -350,6 +364,7 @@ func TestRelationshipsFailsClosedOnPresenceDrift(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, tc.body)
 			})
 			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -361,6 +376,7 @@ func TestRelationshipsFailsClosedOnPresenceDrift(t *testing.T) {
 
 func TestRelationshipsAcceptsExplicitNullParent(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	})
 	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4)
@@ -388,6 +404,7 @@ func TestListMilestoneIssuesFailsClosedOnItemDrift(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, "["+tc.item+"]")
 			}, nil)
 			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
@@ -400,6 +417,7 @@ func TestListMilestoneIssuesFailsClosedOnItemDrift(t *testing.T) {
 func TestListMilestoneIssuesFailsClosedOnDuplicateNumbers(t *testing.T) {
 	dup := issueItem(7, "workflow:delivery")
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, milestonePage(dup, dup))
 	}, nil)
 	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
@@ -409,6 +427,7 @@ func TestListMilestoneIssuesFailsClosedOnDuplicateNumbers(t *testing.T) {
 
 func TestGetIssueFailsClosedOnNumberMismatch(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, issueItem(99, "workflow:delivery"))
 	}, nil)
 	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -430,6 +449,7 @@ func TestListMilestoneIssuesFailsClosedOnTitleDrift(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, "["+tc.item+"]")
 			}, nil)
 			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
@@ -441,6 +461,7 @@ func TestListMilestoneIssuesFailsClosedOnTitleDrift(t *testing.T) {
 
 func TestGetIssueFailsClosedOnTitleDrift(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"number":4,"title":"","state":"open","labels":[]}`)
 	}, nil)
 	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
@@ -450,6 +471,7 @@ func TestGetIssueFailsClosedOnTitleDrift(t *testing.T) {
 
 func TestListMilestoneIssuesFailsClosedOnDuplicateLabels(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `[{"number":1,"title":"x","state":"open","labels":[{"name":"a"},{"name":"a"}]}]`)
 	}, nil)
 	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
@@ -483,6 +505,7 @@ func TestRelationshipsFailClosedOnContradictoryPages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			call := 0
 			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				call++
 				if call == 1 {
 					fmt.Fprint(w, tc.pageOne)
@@ -514,11 +537,132 @@ func TestRelationshipsFailClosedOnSelfReferences(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, tc.body)
 			})
 			if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
 				t.Fatalf("self-referential fact accepted: %s", tc.name)
 			}
 		})
+	}
+}
+
+// --- Round 5 falsification set: transport and pagination-protocol layers ---
+
+func TestRestResponseOverLimitFailsClosed(t *testing.T) {
+	// A JSON array opener followed by over-limit whitespace stays a valid
+	// document when truncated: only an over-limit read can catch it.
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		w.Write(bytes.Repeat([]byte(" "), 4<<20+1))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("over-limit response must fail closed, not truncate into a valid prefix")
+	}
+}
+
+func TestRestTrailingGarbageBeyondLimitFailsClosed(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		w.Write(bytes.Repeat([]byte(" "), 4<<20+1))
+		w.Write([]byte("]"))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("reviewer repro: [] + >4MiB padding + ] read as an empty milestone")
+	}
+}
+
+func TestGraphQLTrailingGarbageBeyondLimitFailsClosed(t *testing.T) {
+	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`))
+		w.Write(bytes.Repeat([]byte(" "), 1<<20+1))
+		w.Write([]byte("]"))
+	})
+	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("reviewer repro: valid doc + >1MiB padding + ] read as no dependencies")
+	}
+}
+
+func TestListMilestoneIssuesFollowsLinkHeaderNext(t *testing.T) {
+	var requests int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requests++
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			// short page that still has a next page: count-based logic stops here
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="next"`, r.Host, r.URL.Path))
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+			return
+		}
+		fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+	}, nil)
+	issues, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err != nil {
+		t.Fatalf("ListMilestoneIssues: %v", err)
+	}
+	if requests != 2 || len(issues) != 2 {
+		t.Fatalf("requests = %d issues = %d, want 2/2（Link rel=next 必须跟随，短页不算结束）", requests, len(issues))
+	}
+}
+
+func TestListMilestoneIssuesFailsClosedOnForeignNextLink(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<http://evil.example.com/repos/o/r/issues?page=2>; rel="next"`)
+		fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+	}, nil)
+	_, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err == nil {
+		t.Fatalf("foreign next link followed or ignored: token must never leave the API origin")
+	}
+	if !strings.Contains(err.Error(), "evil.example.com") && !strings.Contains(err.Error(), "同源") {
+		t.Fatalf("error should name the origin violation: %v", err)
+	}
+}
+
+func TestListMilestoneIssuesFailsClosedOnMalformedLinkHeader(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `not-a-link-header`)
+		fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("malformed Link header must fail closed, not pass silently")
+	}
+}
+
+func TestRequestsTimeOutInsteadOfHanging(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second) // hang, then answer a perfectly valid page
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+	}, nil)
+	c.requestTimeout = 150 * time.Millisecond
+	start := time.Now()
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("hung response must fail via deadline, not block forever")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("deadline did not apply: %v", elapsed)
+	}
+}
+
+func TestNonJSONContentTypeFailsClosed(t *testing.T) {
+	restC := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, "[]") // valid JSON with a wrong type isolates the check
+	}, nil)
+	if _, err := restC.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("200 + text/html accepted as facts (proxy error page scenario)")
+	}
+	gqlC := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+	})
+	if _, err := gqlC.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("GraphQL 200 + text/html accepted as facts")
 	}
 }
