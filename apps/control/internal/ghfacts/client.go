@@ -12,9 +12,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -165,7 +167,22 @@ func newClient(token, restBase, gqlURL string, hc *http.Client) (*Client, error)
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("ghfacts 需要 GitHub 凭据：空 token 会把读取失败伪装成空事实，必须 fail closed")
 	}
-	return &Client{restBase: restBase, gqlURL: gqlURL, token: token, hc: hc, requestTimeout: 30 * time.Second}, nil
+	// A private client with redirects refused: a redirect is a channel whose
+	// identity we did not choose, and the shared default client forwards the
+	// Authorization header to same-host targets (empirically verified). The
+	// transport is the only thing inherited from the provided client.
+	transport := http.DefaultTransport
+	if hc != nil && hc.Transport != nil {
+		transport = hc.Transport
+	}
+	strict := &http.Client{
+		Transport: transport,
+		Jar:       nil,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("拒绝重定向到 %s：信道身份不可证明，凭据不得转发", req.URL.Redacted())
+		},
+	}
+	return &Client{restBase: restBase, gqlURL: gqlURL, token: token, hc: strict, requestTimeout: 30 * time.Second}, nil
 }
 
 type restIssueLabel struct {
@@ -218,8 +235,12 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 	}
 	var issues []Issue
 	seen := make(map[int]bool)
-	nextURL := fmt.Sprintf("%s/repos/%s/issues?milestone=%d&state=all&per_page=%d&page=1",
-		c.restBase, slug, milestone, pageSize)
+	canonical, err := url.Parse(fmt.Sprintf("%s/repos/%s/issues?milestone=%d&state=all&per_page=%d&page=1",
+		c.restBase, slug, milestone, pageSize))
+	if err != nil {
+		return nil, &Error{Op: OpListMilestoneIssues, Detail: fmt.Sprintf("%s milestone %d：%v", slug, milestone, err)}
+	}
+	nextURL := canonical.String()
 	for page := 1; ; page++ {
 		if page > maxRestListPages {
 			return nil, &Error{
@@ -255,7 +276,11 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, slug string, milestone
 			}
 			issues = append(issues, item.toIssue())
 		}
-		next, err := nextLink(header.Get("Link"), c.restBase)
+		current, err := url.Parse(nextURL)
+		if err != nil {
+			return nil, &Error{Op: OpListMilestoneIssues, Detail: fmt.Sprintf("%s milestone %d：%v", slug, milestone, err)}
+		}
+		next, err := boundNextLink(header.Values("Link"), current)
 		if err != nil {
 			return nil, &Error{
 				Op:     OpListMilestoneIssues,
@@ -295,7 +320,9 @@ func (c *Client) GetIssue(ctx context.Context, slug string, number int) (Issue, 
 
 const relationshipsQuery = `query($owner:String!,$repo:String!,$number:Int!,$after:String){
   repository(owner:$owner, name:$repo){
+    nameWithOwner
     issue(number:$number){
+      number
       parent{ number }
       blockedBy(first:100, after:$after){ pageInfo{ hasNextPage endCursor } nodes{ number state } }
     }
@@ -397,6 +424,7 @@ func describeParent(p *int) string {
 // bool (distinct from false), and null node elements stay nil pointers.
 // fetchRelationshipsPage validates all of it and returns normalized facts.
 type relationshipPage struct {
+	Number    *int            `json:"number"`
 	Parent    json.RawMessage `json:"parent"`
 	BlockedBy *struct {
 		PageInfo *struct {
@@ -440,9 +468,16 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 		} `json:"errors"`
 		Data struct {
 			Repository struct {
-				Issue *relationshipPage `json:"issue"`
+				NameWithOwner *string           `json:"nameWithOwner"`
+				Issue         *relationshipPage `json:"issue"`
 			} `json:"repository"`
 		} `json:"data"`
+	}
+	if err := rejectDuplicateKeys(body); err != nil {
+		return zero, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：响应包含重复 JSON 键（外部事实自相矛盾不得静默择一）：%v", slug, number, err),
+		}
 	}
 	if err := json.Unmarshal(body, &gql); err != nil {
 		return zero, &Error{
@@ -466,6 +501,27 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 		return zero, &Error{
 			Op:     OpFetchRelationships,
 			Detail: fmt.Sprintf("%s#%d：Issue 或仓库不存在（缺失事实不得解释为无依赖）", slug, number),
+		}
+	}
+	// Binding: the response must echo the identity we asked for. A perfectly
+	// well-formed document about another repository or issue is still not a
+	// fact about this request.
+	if gql.Data.Repository.NameWithOwner == nil {
+		return zero, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("%s#%d：响应缺少 repository.nameWithOwner（身份不可证）", slug, number),
+		}
+	}
+	if !strings.EqualFold(*gql.Data.Repository.NameWithOwner, slug) {
+		return zero, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("响应来自 %s，不是请求的 %s", *gql.Data.Repository.NameWithOwner, slug),
+		}
+	}
+	if issue.Number == nil || *issue.Number != number {
+		return zero, &Error{
+			Op:     OpFetchRelationships,
+			Detail: fmt.Sprintf("响应是 #%d 的事实，不是请求的 #%d", derefInt(issue.Number), number),
 		}
 	}
 	blockedBy := issue.BlockedBy
@@ -587,8 +643,8 @@ func (c *Client) readResponse(ctx context.Context, method, url string, body io.R
 			fmt.Errorf("响应超过 %d 字节上限（截断出的合法前缀不得解释为完整事实）", limit)
 	}
 	if resp.StatusCode == http.StatusOK {
-		ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
-		if !strings.HasPrefix(ct, "application/json") {
+		mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(resp.Header.Get("Content-Type")))
+		if err != nil || mediaType != "application/json" {
 			return httpResponse{status: resp.StatusCode, header: resp.Header},
 				fmt.Errorf("Content-Type %q 不是 application/json（错误页或代理响应不得解释为事实）", resp.Header.Get("Content-Type"))
 		}
@@ -608,46 +664,156 @@ func (c *Client) fetchJSON(ctx context.Context, url string, limit int64, out any
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return res.header, fmt.Errorf("响应体为空或 null（不得解释为空集合）")
 	}
+	if err := rejectDuplicateKeys(trimmed); err != nil {
+		return res.header, fmt.Errorf("响应包含重复 JSON 键（外部事实自相矛盾不得静默择一）：%w", err)
+	}
 	if err := json.Unmarshal(trimmed, out); err != nil {
 		return res.header, fmt.Errorf("响应不是合法 JSON：%w", err)
 	}
 	return res.header, nil
 }
 
-// nextLink extracts the rel="next" page URL from a Link header. Termination
-// is protocol-driven: no rel=next means the listing is complete; a Link
-// header that cannot be parsed, or a next page on a different origin than
-// the API base, fails closed — the borrowed token must never leave the API
-// origin, and a server's "more pages" signal must not be ignored.
-func nextLink(link, base string) (string, error) {
-	if strings.TrimSpace(link) == "" {
-		return "", nil
-	}
-	baseURL, err := url.Parse(base)
-	if err != nil {
-		return "", fmt.Errorf("API base 不可解析：%w", err)
-	}
-	for _, segment := range strings.Split(link, ",") {
-		m := linkSegment.FindStringSubmatch(segment)
-		if m == nil {
-			return "", fmt.Errorf("Link 头存在但不可解析：%q（不得静默忽略分页信号）", strings.TrimSpace(segment))
+// rejectDuplicateKeys walks the whole document and refuses any object that
+// states the same key twice. Unlike the local configuration file (where the
+// recorded policy is last-wins plus validation of the effective semantics), a
+// network response is external evidence: a repeated key is a contradiction,
+// and any silent choice fabricates certainty that was never sent.
+func rejectDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
 		}
-		if m[2] != "next" {
+		delim, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]bool)
+			for dec.More() {
+				keyTok, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, _ := keyTok.(string)
+				if seen[key] {
+					return fmt.Errorf("对象存在重复键 %q", key)
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil {
+				return err
+			}
+		case '[':
+			for dec.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("第一个 JSON 值之后还有额外内容")
+	}
+	return nil
+}
+
+// boundNextLink derives the next listing page from every Link header value
+// and the canonical current-page URL. Three obligations hold:
+//   - channel: the next page must share the current page's origin — the
+//     borrowed token must never leave it;
+//   - scope: the path and the immutable query parameters (milestone, state,
+//     per_page) must be exactly the requested ones, and only the page number
+//     may change, strictly monotonically — a same-origin link to another
+//     repository or milestone is still facts about something else;
+//   - ambiguity: all header values are considered; more than one rel=next,
+//     or an unparseable segment, fails instead of silently picking one.
+//
+// The returned URL is rebuilt from the canonical parameters; nothing the
+// server sent is replayed verbatim.
+func boundNextLink(linkValues []string, current *url.URL) (string, error) {
+	nextRaw := ""
+	sawLink := false
+	for _, value := range linkValues {
+		if strings.TrimSpace(value) == "" {
 			continue
 		}
-		next, err := url.Parse(m[1])
-		if err != nil || next.Scheme == "" || next.Host == "" {
-			return "", fmt.Errorf("Link rel=next 的 URL 不可解析：%q", m[1])
+		for _, segment := range strings.Split(value, ",") {
+			m := linkSegment.FindStringSubmatch(segment)
+			if m == nil {
+				return "", fmt.Errorf("Link 头存在但不可解析：%q（不得静默忽略分页信号）", strings.TrimSpace(segment))
+			}
+			sawLink = true
+			if m[2] != "next" {
+				continue
+			}
+			if nextRaw != "" {
+				return "", fmt.Errorf("存在多个 rel=next 的下一页（%s 与 %s）：分页信号歧义，不得任选其一", nextRaw, m[1])
+			}
+			nextRaw = m[1]
 		}
-		if next.Scheme != baseURL.Scheme || next.Host != baseURL.Host {
-			return "", fmt.Errorf("拒绝跨源下一页 %s://%s（凭据不得离开 %s://%s）", next.Scheme, next.Host, baseURL.Scheme, baseURL.Host)
-		}
-		return next.String(), nil
 	}
-	return "", nil
+	if !sawLink || nextRaw == "" {
+		return "", nil
+	}
+	next, err := url.Parse(nextRaw)
+	if err != nil || next.Scheme == "" || next.Host == "" {
+		return "", fmt.Errorf("Link rel=next 的 URL 不可解析：%q", nextRaw)
+	}
+	if next.Scheme != current.Scheme || next.Host != current.Host {
+		return "", fmt.Errorf("拒绝跨源下一页 %s://%s（凭据不得离开 %s://%s）", next.Scheme, next.Host, current.Scheme, current.Host)
+	}
+	if next.Path != current.Path {
+		return "", fmt.Errorf("下一页路径 %q 偏离请求端点 %q（事实不得逃逸 Scope）", next.Path, current.Path)
+	}
+	q := next.Query()
+	allowed := map[string]bool{"milestone": true, "state": true, "per_page": true, "page": true}
+	for key := range q {
+		if !allowed[key] {
+			return "", fmt.Errorf("下一页携带未知参数 %q（不得注入查询语义）", key)
+		}
+	}
+	for _, immutable := range []string{"milestone", "state", "per_page"} {
+		if q.Get(immutable) != current.Query().Get(immutable) {
+			return "", fmt.Errorf("下一页的 %s=%q 与请求的 %q 不一致（不可变参数被篡改）", immutable, q.Get(immutable), current.Query().Get(immutable))
+		}
+	}
+	page, err := strconv.Atoi(q.Get("page"))
+	if err != nil || page <= 0 {
+		return "", fmt.Errorf("下一页缺少合法页码：%q", q.Get("page"))
+	}
+	currentPage, err := strconv.Atoi(current.Query().Get("page"))
+	if err != nil || page != currentPage+1 {
+		return "", fmt.Errorf("下一页页码 %d 不满足从 %d 起的单调递增", page, currentPage)
+	}
+	rebuilt := *current
+	rq := rebuilt.Query()
+	rq.Set("page", strconv.Itoa(page))
+	rebuilt.RawQuery = rq.Encode()
+	return rebuilt.String(), nil
 }
 
 var linkSegment = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="?([a-zA-Z]+)"?`)
+
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
 
 func snippet(body []byte) string {
 	s := strings.TrimSpace(string(body))

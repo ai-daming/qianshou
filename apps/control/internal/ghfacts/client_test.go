@@ -146,7 +146,8 @@ func TestListMilestoneIssuesRejectsBadSlugAndEmptyToken(t *testing.T) {
 	}
 }
 
-const gqlHappy = `{"data":{"repository":{"issue":{
+const gqlHappy = `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{
+	"number":30,
 	"parent":{"number":1},
 	"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":29,"state":"OPEN"},{"number":3,"state":"CLOSED"}]}
 }}}}`
@@ -193,7 +194,7 @@ func TestRelationshipsParsesParentAndBlockedBy(t *testing.T) {
 func TestRelationshipsHandlesNoParentNoDeps(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":1,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	})
 	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 1)
 	if err != nil {
@@ -264,7 +265,7 @@ func TestGetIssueFailsClosedOnNullBody(t *testing.T) {
 func TestRelationshipsFailsClosedWhenBlockedBySchemaMissing(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null}}}}`)
 	})
 	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
 		t.Fatalf("missing blockedBy field must fail closed, not read as no dependencies")
@@ -289,11 +290,11 @@ func TestRelationshipsPaginatesBlockedByBeyondFirstPage(t *testing.T) {
 		}
 		cursors = append(cursors, req.Variables.After)
 		if req.Variables.After == "" {
-			fmt.Fprintf(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"CURSOR-1"},"nodes":[%s]}}}}}`,
+			fmt.Fprintf(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"CURSOR-1"},"nodes":[%s]}}}}}`,
 				strings.Join(pageOneNodes, ","))
 			return
 		}
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":101,"state":"OPEN"},{"number":102,"state":"CLOSED"}]}}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":101,"state":"OPEN"},{"number":102,"state":"CLOSED"}]}}}}}`)
 	})
 	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4)
 	if err != nil {
@@ -315,11 +316,11 @@ func TestRelationshipsFailsClosedWhenInnerSchemaMissing(t *testing.T) {
 		name string
 		body string
 	}{
-		{"pageInfo missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"nodes":[]}}}}}`},
-		{"pageInfo null", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":null,"nodes":[]}}}}}`},
-		{"nodes missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false}}}}}}`},
-		{"nodes null", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":null}}}}}`},
-		{"empty blockedBy object", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{}}}}}`},
+		{"pageInfo missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"nodes":[]}}}}}`},
+		{"pageInfo null", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":null,"nodes":[]}}}}}`},
+		{"nodes missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false}}}}}}`},
+		{"nodes null", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":null}}}}}`},
+		{"empty blockedBy object", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{}}}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -337,7 +338,7 @@ func TestRelationshipsFailsClosedWhenInnerSchemaMissing(t *testing.T) {
 func TestRelationshipsFailsClosedWhenNextPageLacksCursor(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":""},"nodes":[]}}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":""},"nodes":[]}}}}}`)
 	})
 	if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
 		t.Fatalf("hasNextPage without endCursor cannot continue pagination and must fail closed")
@@ -351,17 +352,17 @@ func TestRelationshipsFailsClosedOnPresenceDrift(t *testing.T) {
 		name string
 		body string
 	}{
-		{"parent field missing", `{"data":{"repository":{"issue":{"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
-		{"parent object without number", `{"data":{"repository":{"issue":{"parent":{},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
-		{"parent number zero", `{"data":{"repository":{"issue":{"parent":{"number":0},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
-		{"hasNextPage missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"endCursor":"c"},"nodes":[]}}}}}`},
-		{"hasNextPage null", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}`},
-		{"null node element", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[null]}}}}}`},
-		{"empty node object", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{}]}}}}}`},
-		{"node number zero", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":0,"state":"OPEN"}]}}}}}`},
-		{"node state lowercase from graphql", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"open"}]}}}}}`},
-		{"node state unknown enum", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"MERGED"}]}}}}}`},
-		{"node state missing", `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9}]}}}}}`},
+		{"parent field missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
+		{"parent object without number", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":{},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
+		{"parent number zero", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":{"number":0},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`},
+		{"hasNextPage missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"endCursor":"c"},"nodes":[]}}}}}`},
+		{"hasNextPage null", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}`},
+		{"null node element", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[null]}}}}}`},
+		{"empty node object", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{}]}}}}}`},
+		{"node number zero", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":0,"state":"OPEN"}]}}}}}`},
+		{"node state lowercase from graphql", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"open"}]}}}}}`},
+		{"node state unknown enum", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9,"state":"MERGED"}]}}}}}`},
+		{"node state missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":9}]}}}}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -379,7 +380,7 @@ func TestRelationshipsFailsClosedOnPresenceDrift(t *testing.T) {
 func TestRelationshipsAcceptsExplicitNullParent(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	})
 	rel, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4)
 	if err != nil {
@@ -489,18 +490,18 @@ func TestRelationshipsFailClosedOnContradictoryPages(t *testing.T) {
 	}{
 		{
 			name:    "parent differs across pages",
-			pageOne: `{"data":{"repository":{"issue":{"parent":{"number":1},"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
-			pageTwo: `{"data":{"repository":{"issue":{"parent":{"number":2},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":11,"state":"OPEN"}]}}}}}`,
+			pageOne: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":{"number":1},"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageTwo: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":{"number":2},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":11,"state":"OPEN"}]}}}}}`,
 		},
 		{
 			name:    "same blocker repeated across pages",
-			pageOne: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
-			pageTwo: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageOne: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageTwo: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
 		},
 		{
 			name:    "same blocker with conflicting state",
-			pageOne: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
-			pageTwo: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"CLOSED"}]}}}}}`,
+			pageOne: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
+			pageTwo: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"CLOSED"}]}}}}}`,
 		},
 	}
 	for _, tc := range cases {
@@ -529,11 +530,11 @@ func TestRelationshipsFailClosedOnSelfReferences(t *testing.T) {
 	}{
 		{
 			name: "issue is its own parent",
-			body: `{"data":{"repository":{"issue":{"parent":{"number":4},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`,
+			body: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":{"number":4},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`,
 		},
 		{
 			name: "issue blocks itself",
-			body: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":4,"state":"OPEN"}]}}}}}`,
+			body: `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":4,"state":"OPEN"}]}}}}}`,
 		},
 	}
 	for _, tc := range cases {
@@ -579,7 +580,7 @@ func TestRestTrailingGarbageBeyondLimitFailsClosed(t *testing.T) {
 func TestGraphQLTrailingGarbageBeyondLimitFailsClosed(t *testing.T) {
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`))
+		w.Write([]byte(`{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`))
 		w.Write(bytes.Repeat([]byte(" "), 1<<20+1))
 		w.Write([]byte("]"))
 	})
@@ -662,7 +663,7 @@ func TestNonJSONContentTypeFailsClosed(t *testing.T) {
 	}
 	gqlC := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+		fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
 	})
 	if _, err := gqlC.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
 		t.Fatalf("GraphQL 200 + text/html accepted as facts")
