@@ -8,14 +8,12 @@ This package is governed by one invariant:
 > error — never a partial fact set, never "no dependencies", never facts
 > about something else.**
 
-## Model: layers × dimensions
+## Model: layers × dimensions, cells by operation × primitive
 
 Obligations are derived deductively from the invariant, not inductively from
-past review findings. Each **layer** of the read pipeline owns one
-completeness conjunct; each **dimension** owns one truth property that spans
-all layers.
-
-Dimensions:
+past review findings. **Layers** (transport, protocol, syntax, schema,
+semantic, aggregation, consumption) each own one completeness conjunct;
+**dimensions** each own one truth property spanning all layers:
 
 | Dimension | Question | Derivation |
 |---|---|---|
@@ -23,50 +21,64 @@ Dimensions:
 | 绑定 binding | Can a well-formed response about something else reach success? | "about the object that was requested" |
 | 歧义 ambiguity | Can repeated/conflicting representations be silently resolved by picking one? | "unambiguous" |
 | 信道 channel | Can a response from an unchosen origin/type reach success? | "channel whose identity we chose" |
-| 新鲜度 freshness | Can multi-request reads merge a world-state that never existed? | "internally consistent" (bounded; see residual risks) |
+| 新鲜度 freshness | Can merged facts describe a world-state that never existed? | "internally consistent" |
 
-### Falsifiability rule
+A cell is not an atom: each cell is the set of obligations induced by every
+operation × primitive pair inside it. A cell is closed only when each such
+obligation is individually classified. **Cell classification** (exactly one):
 
-Every "enforced by" entry below cites a test that fails if the claim is
-false. An entry without such a test must be marked `UNVERIFIED` — an
-unverified entry is worse than an empty cell because it closes inquiry.
-Round 6 demonstrated both failure modes: `http.DefaultClient` redirect
-behavior and JSON duplicate keys were claimed as absorbed without tests.
+- `ENFORCED` — with a test that fails if the enforcement is removed.
+- `N/A` — with the reason and the counterexample condition under which it
+  becomes applicable (re-checked when operations change).
+- `UNVERIFIED` — suspected but not pinned by a test; must not be claimed as
+  coverage.
+- `ACCEPTED RESIDUAL` — proven undetectable at this layer; the detection gap
+  is the reason.
 
-### Matrix
+**Claim-scope rule**: a claim's cited test must exercise the claim's full
+stated scope. "Header.Get absorbed by Values" is a claim about every header;
+it must cite tests for every header it names, or be narrowed to what the
+tests exercise. Round 7 broke exactly this seam (Link was tested,
+Content-Type was not).
 
-| Layer \ Enforcement | Well-formedness | Binding | Ambiguity | Channel |
-|---|---|---|---|---|
-| 传输 transport | limit+1 read; empty/null body rejected; duplicate keys rejected (`TestRestResponseOverLimit…`, `TestNetworkJSONRejectsDuplicateKeys`) | — | `rejectDuplicateKeys` at every object level (`…/rest_item_field`, `…/graphql_pagination_signal`) | request deadline (`TestRequestsTimeOutInsteadOfHanging`); exact `application/json` via `mime.ParseMediaType` (`TestContentTypeMustBeExactApplicationJSON`); redirects refused by private client (`TestRedirectsAreRefusedAndTokenNeverLeaves`) |
-| 协议 protocol | `hasNextPage` presence; `endCursor` required to continue (`TestRelationshipsFailsClosedWhenInnerSchemaMissing`, `…NextPageLacksCursor`) | next page bound to canonical request: origin, endpoint path, immutable params, monotonic page; URL rebuilt (`TestNextLinkMustStayWithinRequestedScope`) | all `Link` values considered; multiple `rel=next` fail (`TestAllLinkHeaderValuesAreConsidered`) | same-origin next only (`…/two_next_links…`, foreign link in `TestListMilestoneIssuesFailsClosedOnForeignNextLink`) |
-| 语法 syntax | single JSON document (Unmarshal full-input), null/empty bodies fail (`TestListMilestoneIssuesFailsClosedOnNullBody`) | — | duplicate keys rejected before decode (`TestNetworkJSONRejectsDuplicateKeys`) | — |
-| Schema | presence-aware DTOs: `Title *string`, `Labels *[]…`, `parent RawMessage`, `HasNextPage *bool`, `Nodes *[]*…` (`TestRelationshipsFailsClosedOnPresenceDrift`, `…InnerSchemaMissing`, `…TitleDrift`) | GraphQL echoes `nameWithOwner` + issue `number`; REST `GetIssue` matches numbers (`TestGraphQLResponseMustEchoRequestedIdentity`, `TestGetIssueFailsClosedOnNumberMismatch`) | presence vs null vs zero are distinct facts (presence tests) | — |
-| 语义 semantic | `Issue.Validate` / `Relationships.Validate`: enums, positive numbers, non-empty names (`TestListMilestoneIssuesFailsClosedOnItemDrift`, `TestBuildFailsClosedOnInvalidFactShapes`) | identity checks in `Relationships.Validate` (self-parent/self-blocker) | duplicate labels/blockers fail (unified invariants) | — |
-| 聚合 aggregation | cross-page facts must agree: parent consistent, blockers deduped, members unique (`TestRelationshipsFailClosedOnContradictoryPages`, `…OnDuplicateNumbers`) | facts belong to the requested issue number (`TestFromMilestoneFailsClosedOnRelationshipNumberMismatch`) | — | — |
-| 消费 consumption | `scope.Build` re-validates both unified invariants for any `Facts` source (`TestBuildFailsClosed…`) | — | — | — |
+## Matrix
+
+Cell entries cite tests; `—` means `N/A` with the reason inline.
+
+| Layer | 良构 | 绑定 | 歧义 | 信道 | 新鲜度 |
+|---|---|---|---|---|---|
+| 传输 transport | ENFORCED: limit+1 read, UTF-8 gate, single-body JSON (`TestRestResponseOverLimit…`, `TestNetworkJSONRejectsDuplicateKeys`, round-7 utf8 cases) | N/A — transport carries no identity semantics; binding lives where identity fields decode (schema 层) | ENFORCED: duplicate keys under the decoder's equivalence relation (`TestDecoderEquivalenceClassesFailClosed`) | ENFORCED: deadline, exact single `application/json`, redirects refused (`TestRequestsTimeOutInsteadOfHanging`, `TestHeaderCardinalityIsChecked`, `TestRedirectsAreRefusedAndTokenNeverLeaves`) | N/A — a single response is atomic; only multi-response merges can conflict (聚合层) |
+| 协议 protocol | ENFORCED: `hasNextPage`/`endCursor` presence (`TestRelationshipsFailsClosedWhenInnerSchemaMissing`, `…NextPageLacksCursor`) | ENFORCED: next page bound to canonical request — origin, path, immutable params, monotonic page, rebuilt URL (`TestNextLinkMustStayWithinRequestedScope`) | ENFORCED: all Link values considered, multiple rel=next fail, RFC 8288 relation lists (`TestAllLinkHeaderValuesAreConsidered`, `TestLinkRelationTypeListsAreParsedPerRFC8288`) | ENFORCED: same-origin next only (`TestListMilestoneIssuesFailsClosedOnForeignNextLink`) | ACCEPTED RESIDUAL: cross-request atomicity of pagination is undetectable without re-listing; contradictions that ARE observable are enforced at aggregation |
+| 语法 syntax | ENFORCED: Unmarshal full-input single document; empty/null bodies fail (`TestListMilestoneIssuesFailsClosedOnNullBody`) | N/A — syntax has no identity | ENFORCED: strict scan before decode (`TestNetworkJSONRejectsDuplicateKeys`) | N/A | N/A |
+| Schema | ENFORCED: presence-aware DTOs (`Title *string`, `Labels *[]…`, `parent RawMessage`, `HasNextPage *bool`, `Nodes *[]*…`) + exact-case key contracts (`TestRelationshipsFailsClosedOnPresenceDrift`, `…TitleDrift`, `TestDecoderEquivalenceClassesFailClosed/lone_wrong-case…`) | ENFORCED: GraphQL echoes `nameWithOwner`+`number`; REST echoes `repository_url`+listing `milestone`; `GetIssue` number match (`TestGraphQLResponseMustEchoRequestedIdentity`, `TestRestResponsesMustBindToRequestedRepository`, `TestGetIssueFailsClosedOnNumberMismatch`, `TestGetIssueRejectsForeignRepositoryResponse`) | ENFORCED: presence vs null vs zero-value vs wrong-case are distinct facts (same tests) | N/A | N/A |
+| 语义 semantic | ENFORCED: `Issue.Validate`/`Relationships.Validate` — enums, positive numbers, non-empty names (`…ItemDrift`, `TestBuildFailsClosedOnInvalidFactShapes`) | ENFORCED: self-parent/self-blocker rejected (`TestRelationshipsFailClosedOnSelfReferences`) | ENFORCED: duplicate labels/blockers fail (unified invariants) | N/A | N/A |
+| 聚合 aggregation | ENFORCED: cross-page parent agreement, blocker dedup, member dedup (`TestRelationshipsFailClosedOnContradictoryPages`, `…OnDuplicateNumbers`) | ENFORCED: facts belong to the requested issue number (`TestFromMilestoneFailsClosedOnRelationshipNumberMismatch`) | ENFORCED: contradictions fail rather than resolve | N/A | ENFORCED (observable part): one state per issue across members and all blocker references (`TestBuildFailsClosedOnCrossFactStateContradictions`); ACCEPTED RESIDUAL: unobservable between-request drift |
+| 消费 consumption | ENFORCED: `scope.Build` re-validates both invariants for any `Facts` source (`TestBuildFailsClosed…`) | N/A — consumption adds no facts | N/A | N/A | N/A |
 
 ## Primitive failure semantics
 
-| Primitive | Failure semantics | Absorber (verified by) |
+| Primitive | Failure semantics | Absorber (scope: tests that exercise it) |
 |---|---|---|
-| `io.LimitReader` | Silently truncates at the limit | envelope reads limit+1 and errors (`TestRestResponseOverLimitFailsClosed`) |
-| `http.Client` redirects | Follows redirects; forwards `Authorization` to same-host targets (empirically verified in round 6) | private client refuses all redirects (`TestRedirectsAreRefusedAndTokenNeverLeaves`) |
-| `Header.Get` | Returns only the first header value | `Header.Values` + ambiguity rejection (`TestAllLinkHeaderValuesAreConsidered`) |
-| `json.Unmarshal` duplicate keys | Last-wins silently | `rejectDuplicateKeys` for all network bodies (`TestNetworkJSONRejectsDuplicateKeys`); config files keep the documented last-wins policy — different domain, different rule |
-| Content-Type prefix match | Accepts `application/jsonp` | `mime.ParseMediaType` exact match (`TestContentTypeMustBeExactApplicationJSON`) |
-| Count-based loop termination | Infers protocol from page math | REST termination is Link-driven; page caps both sides (`TestListMilestoneIssuesFollowsLinkHeaderNext`, `…UnboundedPagination`) |
+| `io.LimitReader` | Silently truncates at the limit | envelope limit+1 (REST + GraphQL exits: `TestRestResponseOverLimitFailsClosed`, round-7 GraphQL padding repro) |
+| `http.Client` redirects | Follows redirects; forwards `Authorization` to same-host targets | private client refuses all redirects (`TestRedirectsAreRefusedAndTokenNeverLeaves`) |
+| `Header.Get` | Returns only the first header value | `Header.Values` + cardinality/ambiguity rejection — **applied to Link AND Content-Type** (`TestAllLinkHeaderValuesAreConsidered`, `TestHeaderCardinalityIsChecked`) |
+| `encoding/json` field matching | Case-insensitive fold: distinct byte keys collapse to one field | exact-case key contracts + EqualFold duplicate scan (`TestDecoderEquivalenceClassesFailClosed`) |
+| `encoding/json` invalid UTF-8 | Silently replaces with U+FFFD | `utf8.Valid` gate in `scanStrictJSON` (both exits: round-7 utf8 cases) |
+| Link regex | Space-separated relation lists, quoted params with separators | RFC 8288 quote-aware parser (`TestLinkRelationTypeListsAreParsedPerRFC8288`) |
+| `json.Unmarshal` duplicate keys | Last-wins silently | strict scan at every object level for network bodies (`TestNetworkJSONRejectsDuplicateKeys`); config files keep the documented local last-wins policy — different domain, different rule |
+| Count-based loop termination | Infers protocol from page math | Link-driven termination; page caps both sides (`TestListMilestoneIssuesFollowsLinkHeaderNext`, `…UnboundedPagination`) |
 
-## Residual risks (registered, not covered)
+## Residual risks (registered)
 
-- **Freshness between pages**: a multi-page listing cannot atomically snapshot
-  GitHub; membership changes between page requests are only partially
-  detectable (duplicates, contradictions). Registered as accepted.
-- **Proxy environment**: Go's default transport honors `HTTP(S)_PROXY`; with
-  HTTPS the proxy sees only CONNECT, but the trust posture is inherited from
-  the local environment. UNVERIFIED — no test pins this.
-- **TLS trust**: relies on the system root store via the default transport.
-  UNVERIFIED — no test pins this.
+- **Cross-request atomicity** (ACCEPTED RESIDUAL): a multi-page listing cannot
+  atomically snapshot GitHub. Observable contradictions are enforced
+  (aggregation freshness); membership changes between page requests that
+  leave no contradiction are undetectable here.
+- **Proxy environment** (UNVERIFIED): Go's default transport honors
+  `HTTP(S)_PROXY`; HTTPS limits exposure to CONNECT but no test pins this.
+- **TLS trust** (UNVERIFIED): relies on the system root store via the
+  default transport; no test pins this.
 
-New primitives or dimensions must be registered here with a failing-if-false
-test before the entry may claim enforcement. Repairs follow `AGENTS.md`:
-matrix first, RED falsification commit, then GREEN.
+New primitives or dimensions must be registered here with a
+failing-if-false test before an entry may claim ENFORCED. Repairs follow
+`AGENTS.md`: matrix first, RED falsification commit, then GREEN.

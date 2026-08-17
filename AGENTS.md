@@ -39,6 +39,14 @@ or fail-closed defect:
    test that fails when the claim is false; entries without such a test must
    be marked UNVERIFIED. An unverified entry is worse than an empty cell
    because it closes inquiry.
+6. A cell is not an atom. Classify every obligation inside it — expanded by
+   operation × primitive — as exactly one of ENFORCED (with test), N/A (with
+   reason and the counterexample condition that would make it applicable),
+   UNVERIFIED, or ACCEPTED RESIDUAL. "One enforcing point per cell" has never
+   closed a cell.
+7. Claim scope must equal tested scope: a claim spanning several sites,
+   headers, or exits must cite tests exercising each of them, or be narrowed
+   to what the tests actually cover.
 
 See `apps/control/internal/ghfacts/README.md` for the matrix this package
 is governed by.
