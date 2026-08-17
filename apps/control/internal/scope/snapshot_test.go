@@ -273,3 +273,16 @@ func TestBuildFailsClosedOnCrossFactStateContradictions(t *testing.T) {
 		}
 	})
 }
+
+// --- Round 8: forged facts must not pass as read facts ---
+
+func TestBuildRejectsForgedZeroValueFacts(t *testing.T) {
+	// Struct literals carry no provenance: without an unforgeable
+	// completeness proof a Facts implementation can fabricate "read the
+	// issue, no labels, no parent, no dependencies".
+	issues := []ghfacts.Issue{{Number: 1, Title: "x", State: "open"}}
+	rels := map[int]ghfacts.Relationships{1: {Number: 1}}
+	if _, err := Build("m1", issues, rels); err == nil {
+		t.Fatalf("forged zero-value facts fabricated a complete flat snapshot")
+	}
+}

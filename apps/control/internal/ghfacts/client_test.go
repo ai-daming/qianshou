@@ -990,3 +990,71 @@ func TestLinkRelationTypeListsAreParsedPerRFC8288(t *testing.T) {
 		t.Fatalf(`rel="prev next" not treated as containing next: requests=%d issues=%d`, requests, len(issues))
 	}
 }
+
+// --- Round 8 falsification set ---
+
+func TestLinkRepeatedRelParamKeepsFirstOccurrence(t *testing.T) {
+	var requests int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requests++
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="next"; rel="prev"`, r.Host, r.URL.Path))
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+			return
+		}
+		fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+	}, nil)
+	issues, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err != nil {
+		t.Fatalf("ListMilestoneIssues: %v", err)
+	}
+	if requests != 2 || len(issues) != 2 {
+		t.Fatalf(`rel="next"; rel="prev" erased next via last-wins: requests=%d issues=%d`, requests, len(issues))
+	}
+}
+
+func TestLinkUnclosedQuoteFailsClosed(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="next`, r.Host, r.URL.Path))
+		fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("unclosed quote swallowed the next-page signal and read as termination")
+	}
+}
+
+func TestGetIssueRootEnforcesExactCaseSchema(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"Number":4,"Title":"x","State":"open","Labels":[],"Repository_URL":"https://api.github.com/repos/ai-daming/qianshou","Milestone":{"Number":1}}`)
+	}, nil)
+	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("wrong-case-only fields satisfied the single-issue root object")
+	}
+}
+
+func TestRepositoryURLMustMatchCanonicalAPIIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"foreign host with same path", "https://evil.example/repos/ai-daming/qianshou"},
+		{"userinfo smuggled", "https://user:pass@api.github.com/repos/ai-daming/qianshou"},
+		{"query injected", "https://api.github.com/repos/ai-daming/qianshou?x=1"},
+		{"fragment injected", "https://api.github.com/repos/ai-daming/qianshou#f"},
+		{"plain http", "http://api.github.com/repos/ai-daming/qianshou"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `[{"number":1,"title":"x","state":"open","labels":[],"repository_url":%q,"milestone":{"number":1}}]`, tc.url)
+			}, nil)
+			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+				t.Fatalf("repository_url %q accepted as canonical API identity", tc.url)
+			}
+		})
+	}
+}
