@@ -261,7 +261,7 @@ func TestRelationshipsFailsClosedWhenBlockedBySchemaMissing(t *testing.T) {
 func TestRelationshipsPaginatesBlockedByBeyondFirstPage(t *testing.T) {
 	pageOneNodes := make([]string, 100)
 	for i := range pageOneNodes {
-		pageOneNodes[i] = fmt.Sprintf(`{"number":%d,"state":"OPEN"}`, i+1)
+		pageOneNodes[i] = fmt.Sprintf(`{"number":%d,"state":"OPEN"}`, 1000+i)
 	}
 	var cursors []string
 	c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -459,22 +459,22 @@ func TestListMilestoneIssuesFailsClosedOnDuplicateLabels(t *testing.T) {
 
 func TestRelationshipsFailClosedOnContradictoryPages(t *testing.T) {
 	cases := []struct {
-		name   string
+		name    string
 		pageOne string
 		pageTwo string
 	}{
 		{
-			name:   "parent differs across pages",
+			name:    "parent differs across pages",
 			pageOne: `{"data":{"repository":{"issue":{"parent":{"number":1},"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
 			pageTwo: `{"data":{"repository":{"issue":{"parent":{"number":2},"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":11,"state":"OPEN"}]}}}}}`,
 		},
 		{
-			name:   "same blocker repeated across pages",
+			name:    "same blocker repeated across pages",
 			pageOne: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
 			pageTwo: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
 		},
 		{
-			name:   "same blocker with conflicting state",
+			name:    "same blocker with conflicting state",
 			pageOne: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1"},"nodes":[{"number":10,"state":"OPEN"}]}}}}}`,
 			pageTwo: `{"data":{"repository":{"issue":{"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":10,"state":"CLOSED"}]}}}}}`,
 		},

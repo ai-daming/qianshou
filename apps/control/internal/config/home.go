@@ -34,6 +34,12 @@ func ConfigPath(home string) string { return filepath.Join(home, "config.json") 
 // copied GitHub facts and legacy role bindings surface immediately instead of
 // drifting beside the contract, and a trailing second JSON document is
 // rejected instead of being silently ignored.
+//
+// Recorded parsing policy: duplicate object keys are resolved last-wins by
+// the Go standard decoder, and Validate() checks the resulting effective
+// semantics, so duplicates cannot bypass validation; rejecting them has no
+// standard-library support and a hand-rolled scanner is riskier than the
+// gap. Revisit if encoding/json grows duplicate-key rejection.
 func parse(data []byte) (*Config, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

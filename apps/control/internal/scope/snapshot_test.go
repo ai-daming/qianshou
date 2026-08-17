@@ -11,7 +11,7 @@ import (
 )
 
 func issue(number int, labels ...string) ghfacts.Issue {
-	return ghfacts.Issue{Number: number, Title: fmt.Sprintf("issue %d", number), State: "OPEN", Labels: labels}
+	return ghfacts.Issue{Number: number, Title: fmt.Sprintf("issue %d", number), State: "open", Labels: labels}
 }
 
 func rel(number int, parent *int, blocked ...ghfacts.BlockedIssue) ghfacts.Relationships {

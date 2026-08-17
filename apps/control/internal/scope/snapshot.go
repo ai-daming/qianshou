@@ -104,6 +104,15 @@ func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relation
 		if r.Number != src.Number {
 			return nil, fmt.Errorf("事实错位：请求 #%d 的关系却得到 #%d 的（不得拼装成同一事实）", src.Number, r.Number)
 		}
+		// Facts is a replaceable interface: the unified ghfacts invariants are
+		// enforced here too, so no fact source can hand Build a collapsed,
+		// contradictory, or self-referential fact set.
+		if err := src.Validate(); err != nil {
+			return nil, fmt.Errorf("成员事实无效（#%d）：%w", src.Number, err)
+		}
+		if err := r.Validate(); err != nil {
+			return nil, fmt.Errorf("关系事实无效（#%d）：%w", src.Number, err)
+		}
 		item := Item{
 			Number:         src.Number,
 			Title:          src.Title,

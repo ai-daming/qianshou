@@ -67,6 +67,69 @@ type Relationships struct {
 	BlockedBy []BlockedIssue
 }
 
+// Validate is the unified fact invariant for one observed issue. Every decode
+// exit in this package and every consumer that assembles facts into a
+// snapshot (scope.Build) reuses it, so no call site can accept a collapsed,
+// contradictory, or self-referential fact set.
+func (i Issue) Validate() error {
+	if i.Number <= 0 {
+		return fmt.Errorf("issue 缺少 number（不得折叠为零值）")
+	}
+	if i.Title == "" {
+		return fmt.Errorf("#%d 缺少 title（没拿到不能解释为标题为空）", i.Number)
+	}
+	if i.State != "open" && i.State != "closed" {
+		return fmt.Errorf("#%d 的 state %q 不是已知的 REST 枚举（open/closed）", i.Number, i.State)
+	}
+	seen := make(map[string]bool, len(i.Labels))
+	for _, name := range i.Labels {
+		if name == "" {
+			return fmt.Errorf("#%d 存在空标签名", i.Number)
+		}
+		if seen[name] {
+			return fmt.Errorf("#%d 的标签 %q 重复出现，同一事实出现两次即矛盾", i.Number, name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+// Validate is the unified fact invariant for one issue's relationships.
+// Parent must be positive and not the issue itself; every blocker must carry
+// a positive number, a known GraphQL state, and appear at most once. A
+// zero-number CLOSED blocker is a collapsed fact that would masquerade as a
+// satisfied dependency.
+func (r Relationships) Validate() error {
+	if r.Number <= 0 {
+		return fmt.Errorf("关系事实缺少所属 Issue 编号")
+	}
+	if r.Parent != nil {
+		if *r.Parent <= 0 {
+			return fmt.Errorf("#%d 的 parent 编号非正数", r.Number)
+		}
+		if *r.Parent == r.Number {
+			return fmt.Errorf("#%d 是自己的 parent，事实矛盾", r.Number)
+		}
+	}
+	seen := make(map[int]bool, len(r.BlockedBy))
+	for _, b := range r.BlockedBy {
+		if b.Number <= 0 {
+			return fmt.Errorf("#%d 的依赖缺少 number（零值依赖会伪装成已满足）", r.Number)
+		}
+		if b.Number == r.Number {
+			return fmt.Errorf("#%d 依赖自己，事实矛盾", r.Number)
+		}
+		if b.State != "OPEN" && b.State != "CLOSED" {
+			return fmt.Errorf("#%d 的依赖 #%d state %q 不是已知的 GraphQL 枚举（OPEN/CLOSED）", r.Number, b.Number, b.State)
+		}
+		if seen[b.Number] {
+			return fmt.Errorf("#%d 的依赖 #%d 重复出现，同一事实出现两次即矛盾", r.Number, b.Number)
+		}
+		seen[b.Number] = true
+	}
+	return nil
+}
+
 const (
 	defaultRestBase = "https://api.github.com"
 	defaultGqlURL   = "https://api.github.com/graphql"
@@ -103,7 +166,7 @@ type restIssueLabel struct {
 
 type restIssue struct {
 	Number      int               `json:"number"`
-	Title       string            `json:"title"`
+	Title       *string           `json:"title"`
 	State       string            `json:"state"`
 	Labels      *[]restIssueLabel `json:"labels"`
 	PullRequest *struct {
@@ -111,10 +174,9 @@ type restIssue struct {
 	} `json:"pull_request"`
 }
 
-// validateRestIssue enforces the presence and shape of every fact this package
-// consumes. REST returns lowercase states (open/closed), GraphQL returns
-// uppercase (OPEN/CLOSED); a missing or foreign value is schema drift and
-// fails closed instead of collapsing to a zero value.
+// validateRestItem enforces presence at the decode boundary (missing vs
+// null vs empty title, missing labels) and then delegates the semantic shape
+// to the unified Issue.Validate invariant shared with every consumer.
 func validateRestItem(item restIssue, expectedNumber int) error {
 	if item.Number <= 0 {
 		return fmt.Errorf("响应项缺少 number（不得折叠为零值）")
@@ -122,18 +184,13 @@ func validateRestItem(item restIssue, expectedNumber int) error {
 	if expectedNumber != 0 && item.Number != expectedNumber {
 		return fmt.Errorf("响应是 #%d 的事实，不是请求的 #%d", item.Number, expectedNumber)
 	}
-	if item.State != "open" && item.State != "closed" {
-		return fmt.Errorf("#%d 的 state %q 不是已知的 REST 枚举（open/closed）", item.Number, item.State)
+	if item.Title == nil {
+		return fmt.Errorf("#%d 缺少 title 字段或为 null（不得折叠为空标题）", item.Number)
 	}
 	if item.Labels == nil {
 		return fmt.Errorf("#%d 缺少 labels 字段或为 null（不得折叠为无标签）", item.Number)
 	}
-	for _, label := range *item.Labels {
-		if label.Name == "" {
-			return fmt.Errorf("#%d 存在空标签名", item.Number)
-		}
-	}
-	return nil
+	return item.toIssue().Validate()
 }
 
 func (item restIssue) toIssue() Issue {
@@ -141,7 +198,7 @@ func (item restIssue) toIssue() Issue {
 	for _, l := range *item.Labels {
 		labels = append(labels, l.Name)
 	}
-	return Issue{Number: item.Number, Title: item.Title, State: item.State, Labels: labels}
+	return Issue{Number: item.Number, Title: *item.Title, State: item.State, Labels: labels}
 }
 
 // ListMilestoneIssues returns every issue currently in one GitHub milestone
@@ -241,6 +298,12 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 	parts := strings.SplitN(slug, "/", 2)
 	rel := Relationships{Number: number}
 	after := ""
+	// Every page describes the same issue: parent must agree across pages and
+	// a blocker may appear at most once. Contradictory pages fail as a whole
+	// instead of merging into a snapshot that never existed.
+	parentSeen := false
+	var parentValue *int
+	seenBlockers := make(map[int]string)
 	for page := 0; ; page++ {
 		if page >= maxRelationshipPages {
 			return Relationships{}, &Error{
@@ -256,15 +319,56 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 		if err != nil {
 			return Relationships{}, err
 		}
-		if page == 0 {
-			rel.Parent = facts.parent
+		if !parentSeen {
+			parentSeen = true
+			parentValue = facts.parent
+		} else if !sameParent(parentValue, facts.parent) {
+			return Relationships{}, &Error{
+				Op: OpFetchRelationships,
+				Detail: fmt.Sprintf("%s#%d：第 %d 页的 parent 与首页矛盾（%s ↔ %s），不得拼接",
+					slug, number, page+1, describeParent(parentValue), describeParent(facts.parent)),
+			}
+		}
+		for _, b := range facts.nodes {
+			if prevState, dup := seenBlockers[b.Number]; dup {
+				detail := fmt.Sprintf("依赖 #%d 跨页重复出现", b.Number)
+				if prevState != b.State {
+					detail += fmt.Sprintf("且状态矛盾（%s ↔ %s）", prevState, b.State)
+				}
+				return Relationships{}, &Error{
+					Op:     OpFetchRelationships,
+					Detail: fmt.Sprintf("%s#%d：%s", slug, number, detail),
+				}
+			}
+			seenBlockers[b.Number] = b.State
 		}
 		rel.BlockedBy = append(rel.BlockedBy, facts.nodes...)
 		if !facts.hasNext {
+			rel.Parent = parentValue
+			if err := rel.Validate(); err != nil {
+				return Relationships{}, &Error{
+					Op:     OpFetchRelationships,
+					Detail: fmt.Sprintf("%s#%d：%v", slug, number, err),
+				}
+			}
 			return rel, nil
 		}
 		after = facts.endCursor
 	}
+}
+
+func sameParent(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func describeParent(p *int) string {
+	if p == nil {
+		return "无父级（null）"
+	}
+	return fmt.Sprintf("#%d", *p)
 }
 
 // relationshipPage decodes presence-aware: a missing parent field stays a nil
@@ -406,18 +510,6 @@ func (c *Client) fetchRelationshipsPage(ctx context.Context, slug string, number
 			return zero, &Error{
 				Op:     OpFetchRelationships,
 				Detail: fmt.Sprintf("%s#%d：blockedBy.nodes 含 null 元素（不得折叠为零值依赖）", slug, number),
-			}
-		}
-		if node.Number <= 0 {
-			return zero, &Error{
-				Op:     OpFetchRelationships,
-				Detail: fmt.Sprintf("%s#%d：blockedBy 依赖缺少 number（不得折叠为零值）", slug, number),
-			}
-		}
-		if node.State != "OPEN" && node.State != "CLOSED" {
-			return zero, &Error{
-				Op:     OpFetchRelationships,
-				Detail: fmt.Sprintf("%s#%d：依赖 #%d 的 state %q 不是已知的 GraphQL 枚举（OPEN/CLOSED）", slug, number, node.Number, node.State),
 			}
 		}
 		nodes = append(nodes, BlockedIssue{Number: node.Number, State: node.State})

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 // Resolve returns a GitHub API token. Order: GH_TOKEN, GITHUB_TOKEN, then
@@ -46,11 +47,12 @@ func Resolve(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("找不到 GitHub 凭据：已尝试 GH_TOKEN、GITHUB_TOKEN、gh auth token（PATH 中无 gh）")
 }
 
-// validateTokenShape rejects tokens that still carry whitespace or control
-// characters after trimming: such a value is not a credential but a broken
-// environment, and sending it as a header would only obscure the failure.
+// validateTokenShape rejects tokens that still carry whitespace or any
+// control character after trimming: such a value is not a credential but a
+// broken environment, and sending it as a header would only obscure the
+// failure.
 func validateTokenShape(token string) error {
-	if strings.ContainsAny(token, " \t\r\n\x00") {
+	if strings.ContainsFunc(token, func(r rune) bool { return r == ' ' || r == '\t' || unicode.IsControl(r) }) {
 		return fmt.Errorf("包含空白或控制字符，不是合法凭据形状")
 	}
 	return nil
