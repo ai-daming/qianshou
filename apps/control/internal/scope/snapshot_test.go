@@ -240,3 +240,36 @@ func TestBuildFailsClosedOnInvalidIssueFacts(t *testing.T) {
 		t.Fatalf("invalid issue fact accepted from a replaceable Facts source")
 	}
 }
+
+// --- Round 7: freshness as detectable cross-fact consistency ---
+
+func TestBuildFailsClosedOnCrossFactStateContradictions(t *testing.T) {
+	t.Run("member state contradicts blocker state", func(t *testing.T) {
+		issues := []ghfacts.Issue{
+			issue(1, "workflow:control", "type:milestone-control", "rigor:standard"),
+			issue(2, "workflow:delivery", "type:technical", "rigor:standard"),
+		}
+		rels := map[int]ghfacts.Relationships{
+			1: rel(1, nil),
+			2: {Number: 2, BlockedBy: []ghfacts.BlockedIssue{{Number: 1, State: "CLOSED"}}},
+		}
+		if _, err := Build("m1", issues, rels); err == nil {
+			t.Fatalf("member #1 open vs relationship fact #1 CLOSED merged into one snapshot")
+		}
+	})
+	t.Run("two referrers disagree on blocker state", func(t *testing.T) {
+		issues := []ghfacts.Issue{
+			issue(1, "workflow:control", "type:milestone-control", "rigor:standard"),
+			issue(2, "workflow:delivery", "type:technical", "rigor:standard"),
+			issue(3, "workflow:delivery", "type:technical", "rigor:standard"),
+		}
+		rels := map[int]ghfacts.Relationships{
+			1: rel(1, nil),
+			2: {Number: 2, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}}},
+			3: {Number: 3, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "CLOSED"}}},
+		}
+		if _, err := Build("m1", issues, rels); err == nil {
+			t.Fatalf("blocker #9 reported OPEN and CLOSED by different facts")
+		}
+	})
+}

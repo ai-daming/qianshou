@@ -870,3 +870,123 @@ func TestNetworkJSONRejectsDuplicateKeys(t *testing.T) {
 		}
 	})
 }
+
+// --- Round 7 falsification set: equivalence classes, REST binding,
+// header cardinality, RFC 8288 relation lists ---
+
+func TestDecoderEquivalenceClassesFailClosed(t *testing.T) {
+	t.Run("lone wrong-case schema field", func(t *testing.T) {
+		c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"HasNextPage":false},"nodes":[]}}}}}`)
+		})
+		if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+			t.Fatalf("wrong-case-only schema field satisfied the presence contract")
+		}
+	})
+	t.Run("case-variant duplicate keys merge by decoder", func(t *testing.T) {
+		c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"parent":null,"blockedBy":{"pageInfo":{"hasNextPage":true,"endCursor":"C1","HasNextPage":false},"nodes":[]}}}}}`)
+		})
+		if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+			t.Fatalf("case-variant duplicate terminated pagination via last-wins")
+		}
+	})
+	t.Run("invalid utf-8 in rest body", func(t *testing.T) {
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[{"number":1,"title":"a`))
+			w.Write([]byte{0xff})
+			w.Write([]byte(`b","state":"open","labels":[]}]`))
+		}, nil)
+		if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+			t.Fatalf("invalid UTF-8 silently replaced with U+FFFD instead of failing")
+		}
+	})
+	t.Run("invalid utf-8 in graphql body", func(t *testing.T) {
+		c := newTestClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":4,"ti`)
+			fmt.Fprint(w, "t")
+			w.Write([]byte{0xfe})
+			fmt.Fprint(w, `le":"x","parent":null,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+		})
+		if _, err := c.Relationships(context.Background(), "ai-daming/qianshou", 4); err == nil {
+			t.Fatalf("invalid UTF-8 silently replaced in GraphQL response")
+		}
+	})
+}
+
+func TestRestResponsesMustBindToRequestedRepository(t *testing.T) {
+	cases := []struct {
+		name string
+		item string
+	}{
+		{
+			name: "repository_url points at another repository",
+			item: `{"number":1,"title":"x","state":"open","labels":[],"repository_url":"https://api.github.com/repos/other/repo","milestone":{"number":1}}`,
+		},
+		{
+			name: "repository_url missing",
+			item: `{"number":1,"title":"x","state":"open","labels":[],"milestone":{"number":1}}`,
+		},
+		{
+			name: "milestone differs from the requested one",
+			item: `{"number":1,"title":"x","state":"open","labels":[],"repository_url":"https://api.github.com/repos/ai-daming/qianshou","milestone":{"number":999}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, "["+tc.item+"]")
+			}, nil)
+			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+				t.Fatalf("facts from another repository/milestone accepted: %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestGetIssueRejectsForeignRepositoryResponse(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"number":4,"title":"x","state":"open","labels":[],"repository_url":"https://api.github.com/repos/other/repo"}`)
+	}, nil)
+	if _, err := c.GetIssue(context.Background(), "ai-daming/qianshou", 4); err == nil {
+		t.Fatalf("same-number response from another repository accepted")
+	}
+}
+
+func TestHeaderCardinalityIsChecked(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "application/json")
+		w.Header().Add("Content-Type", "text/html")
+		fmt.Fprint(w, "[]")
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("two Content-Type values resolved by silently picking the first")
+	}
+}
+
+func TestLinkRelationTypeListsAreParsedPerRFC8288(t *testing.T) {
+	var requests int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requests++
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="prev next"`, r.Host, r.URL.Path))
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+			return
+		}
+		fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+	}, nil)
+	issues, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err != nil {
+		t.Fatalf("ListMilestoneIssues: %v", err)
+	}
+	if requests != 2 || len(issues) != 2 {
+		t.Fatalf(`rel="prev next" not treated as containing next: requests=%d issues=%d`, requests, len(issues))
+	}
+}
