@@ -43,17 +43,21 @@ Content-Type was not).
 
 ## Matrix
 
-Cell entries cite tests; `—` means `N/A` with the reason inline.
+Cells reference obligation IDs in
+[`obligations.json`](obligations.json), the machine-readable manifest;
+`scripts/check-obligations.sh` (wired into CI) verifies that every
+ENFORCED entry cites tests that exist and pass. The prose table below is
+the human view — the manifest is the binding one.
 
 | Layer | 良构 | 绑定 | 歧义 | 信道 | 新鲜度 |
 |---|---|---|---|---|---|
-| 传输 transport | ENFORCED: limit+1 read, UTF-8 gate, single-body JSON (`TestRestResponseOverLimit…`, `TestNetworkJSONRejectsDuplicateKeys`, round-7 utf8 cases) | N/A — transport carries no identity semantics; binding lives where identity fields decode (schema 层) | ENFORCED: duplicate keys under the decoder's equivalence relation (`TestDecoderEquivalenceClassesFailClosed`) | ENFORCED: deadline, exact single `application/json`, redirects refused (`TestRequestsTimeOutInsteadOfHanging`, `TestHeaderCardinalityIsChecked`, `TestRedirectsAreRefusedAndTokenNeverLeaves`) | N/A — a single response is atomic; only multi-response merges can conflict (聚合层) |
-| 协议 protocol | ENFORCED: `hasNextPage`/`endCursor` presence (`TestRelationshipsFailsClosedWhenInnerSchemaMissing`, `…NextPageLacksCursor`) | ENFORCED: next page bound to canonical request — origin, path, immutable params, monotonic page, rebuilt URL (`TestNextLinkMustStayWithinRequestedScope`) | ENFORCED at all three granularities: header-value (multiple rel=next across values fails), JSON-key (EqualFold dup scan), and parameter-occurrence × quote-state — first occurrence wins per RFC 8288 §3.3, unclosed quotes fail (`TestAllLinkHeaderValuesAreConsidered`, `TestLinkRepeatedRelParamKeepsFirstOccurrence`, `TestLinkUnclosedQuoteFailsClosed`) | ENFORCED: same-origin next only (`TestListMilestoneIssuesFailsClosedOnForeignNextLink`) | ACCEPTED RESIDUAL: cross-request atomicity of pagination is undetectable without re-listing; contradictions that ARE observable are enforced at aggregation |
-| 语法 syntax | ENFORCED: Unmarshal full-input single document; empty/null bodies fail (`TestListMilestoneIssuesFailsClosedOnNullBody`) | N/A — syntax has no identity | ENFORCED: strict scan before decode (`TestNetworkJSONRejectsDuplicateKeys`) | N/A | N/A |
-| Schema | ENFORCED: presence-aware DTOs + exact-case key contracts on BOTH REST root paths — listing `[]` and single-issue `""` (`TestRelationshipsFailsClosedOnPresenceDrift`, `…TitleDrift`, `TestDecoderEquivalenceClassesFailClosed`, `TestGetIssueRootEnforcesExactCaseSchema`) | ENFORCED: GraphQL echoes `nameWithOwner`+`number` (`TestGraphQLResponseMustEchoRequestedIdentity`); REST `repository_url` must equal the FULL canonical API identity — https, api.github.com, /repos/{slug}, no userinfo/query/fragment (`TestRepositoryURLMustMatchCanonicalAPIIdentity`, 5 variants; path direction in `TestRestResponsesMustBindToRequestedRepository`); listing `milestone` ENFORCED | ENFORCED: presence vs null vs zero-value vs wrong-case are distinct facts (same tests, both root paths) | N/A | N/A |
-| 语义 semantic | ENFORCED: `Issue.Validate`/`Relationships.Validate` — enums, positive numbers, non-empty names (`…ItemDrift`, `TestBuildFailsClosedOnInvalidFactShapes`) | ENFORCED: self-parent/self-blocker rejected (`TestRelationshipsFailClosedOnSelfReferences`) | ENFORCED: duplicate labels/blockers fail (unified invariants) | N/A | N/A |
-| 聚合 aggregation | ENFORCED: cross-page parent agreement, blocker dedup, member dedup (`TestRelationshipsFailClosedOnContradictoryPages`, `…OnDuplicateNumbers`) | ENFORCED: facts belong to the requested issue number (`TestFromMilestoneFailsClosedOnRelationshipNumberMismatch`) | ENFORCED: contradictions fail rather than resolve | N/A | ENFORCED (observable part): one state per issue across members and all blocker references (`TestBuildFailsClosedOnCrossFactStateContradictions`); ACCEPTED RESIDUAL: unobservable between-request drift |
-| 消费 consumption | ENFORCED: fact types are unforgeable — `Issue`/`Relationships` carry an unexported provenance bit set only by decoding or by `NewIssue`/`NewRelationships`; `scope.Build` re-validates both, so struct literals from ANY Facts implementation are refused (`TestBuildRejectsForgedZeroValueFacts`), and invalid facts cannot even be constructed (`TestConstructorsRejectInvalidFacts`) | N/A — consumption adds no facts | N/A | N/A | N/A |
+| 传输 transport | ENFORCED: GH-T-WF-LIMIT, GH-T-WF-BODY | N/A — transport carries no identity; binding lives where identity fields decode (schema) | ENFORCED: GH-T-AM-DUPKEYS, GH-T-AM-UTF8 | ENFORCED: GH-T-CH-DEADLINE, GH-T-CH-MEDIATYPE, GH-T-CH-REDIRECT | N/A — single responses are atomic; multi-response conflicts belong to aggregation |
+| 协议 protocol | ENFORCED: GH-P-WF-PAGEINFO, GH-P-WF-TERMINATION | ENFORCED: GH-P-BD-NEXTURL | ENFORCED: GH-P-AM-GRAMMAR (single owner: parseLinkHeader) | ENFORCED: GH-P-CH-ORIGIN | ACCEPTED RESIDUAL: GH-A-FR-ATOMICITY |
+| 语法 syntax | ENFORCED (as part of GH-T-WF-BODY: full-input Unmarshal, empty/null rejected) | N/A | ENFORCED (GH-T-AM-DUPKEYS runs before decode at every object level) | N/A | N/A |
+| Schema | ENFORCED: GH-S-WF-PRESENCE, GH-S-WF-EXACTCASE (both REST root paths and GraphQL) | ENFORCED: GH-S-BD-GQLIDENTITY, GH-S-BD-RESTIDENTITY (full canonical repository_url identity) | ENFORCED (presence vs null vs zero vs wrong-case are distinct facts, same IDs) | N/A | N/A |
+| 语义 semantic | ENFORCED: GH-SE-WF-INVARIANTS (unified Validate on opaque types) | ENFORCED (self-parent/self-blocker inside the unified invariants) | ENFORCED (duplicate labels/blockers fail, unified invariants) | N/A | N/A |
+| 聚合 aggregation | ENFORCED: GH-A-WF-CONSISTENCY | ENFORCED (facts belong to the requested issue; enforced in Build) | ENFORCED (contradictions fail rather than resolve) | N/A | ENFORCED: GH-A-FR-STATES; GH-A-FR-ATOMICITY is ACCEPTED RESIDUAL |
+| 消费 consumption | ENFORCED: GH-C-WF-UNFORGEABLE (opaque facts, no public mint, scope takes the concrete client), GH-C-WF-MULTICONTROL | ENFORCED: GH-C-BD-FETCHFAIL | N/A | N/A | N/A |
 
 ## Primitive failure semantics
 
@@ -65,7 +69,8 @@ Cell entries cite tests; `—` means `N/A` with the reason inline.
 | `encoding/json` field matching | Case-insensitive fold: distinct byte keys collapse to one field | exact-case key contracts + EqualFold duplicate scan (`TestDecoderEquivalenceClassesFailClosed`) |
 | `encoding/json` invalid UTF-8 | Silently replaces with U+FFFD | `utf8.Valid` gate in `scanStrictJSON` (both exits: round-7 utf8 cases) |
 | Link regex | Space-separated relation lists, quoted params with separators | RFC 8288 quote-aware parser (`TestLinkRelationTypeListsAreParsedPerRFC8288`); repeated params keep first occurrence §3.3 (`TestLinkRepeatedRelParamKeepsFirstOccurrence`); unclosed quotes fail (`TestLinkUnclosedQuoteFailsClosed`) |
-| Exported fact structs | Zero values forge "read and empty" | unexported provenance bit + validating constructors (`TestBuildRejectsForgedZeroValueFacts`, `TestConstructorsRejectInvalidFacts`) |
+| Exported fact structs | Zero values forge "read and empty"; public constructors are a mint; mutable exported fields unbind the stamp | opaque immutable types, no public constructor, concrete *ghfacts.Client seam (`GH-C-WF-UNFORGEABLE`) |
+| Link grammar (splitter/validator/unquoter ×4) | Divergent state machines mis-split legal quoted-pairs | single grammar owner parseLinkHeader (`GH-P-AM-GRAMMAR`) |
 | `json.Unmarshal` duplicate keys | Last-wins silently | strict scan at every object level for network bodies (`TestNetworkJSONRejectsDuplicateKeys`); config files keep the documented local last-wins policy — different domain, different rule |
 | Count-based loop termination | Infers protocol from page math | Link-driven termination; page caps both sides (`TestListMilestoneIssuesFollowsLinkHeaderNext`, `…UnboundedPagination`) |
 
