@@ -44,20 +44,23 @@ Content-Type was not).
 ## Matrix
 
 Cells reference obligation IDs in
-[`obligations.json`](obligations.json), the machine-readable manifest;
-`scripts/check-obligations.sh` (wired into CI) verifies that every
-ENFORCED entry cites tests that exist and pass. The prose table below is
-the human view — the manifest is the binding one.
+[`obligations.json`](obligations.json). DOWNGRADED (round 10): the shell
+checker proves citation EXISTENCE only — a typo'd status silently exempts
+an obligation, a citation may bind a same-named test in the wrong
+package, 17 of 61 tests are unclassified, and nothing checks
+README↔manifest consistency or the checker itself. It is a smoke check,
+not a binding proof, until the manifest grows a schema, package-qualified
+identities, and tamper tests.
 
 | Layer | 良构 | 绑定 | 歧义 | 信道 | 新鲜度 |
 |---|---|---|---|---|---|
 | 传输 transport | ENFORCED: GH-T-WF-LIMIT, GH-T-WF-BODY | N/A — transport carries no identity; binding lives where identity fields decode (schema) | ENFORCED: GH-T-AM-DUPKEYS, GH-T-AM-UTF8 | ENFORCED: GH-T-CH-DEADLINE, GH-T-CH-MEDIATYPE, GH-T-CH-REDIRECT | N/A — single responses are atomic; multi-response conflicts belong to aggregation |
-| 协议 protocol | ENFORCED: GH-P-WF-PAGEINFO, GH-P-WF-TERMINATION | ENFORCED: GH-P-BD-NEXTURL | ENFORCED: GH-P-AM-GRAMMAR (single owner: parseLinkHeader) | ENFORCED: GH-P-CH-ORIGIN | ACCEPTED RESIDUAL: GH-A-FR-ATOMICITY |
+| 协议 protocol | ENFORCED: GH-P-WF-PAGEINFO, GH-P-WF-TERMINATION | ENFORCED: GH-P-BD-NEXTURL | DOWNGRADED (round 10): parseLinkHeader owns the grammar's STRUCTURE (one state machine: quoting, quoted-pair, separators, first-occurrence, required rel) but validates no ABNF alphabet — a quote inside an unquoted value (`rel=ne"xt`), an invalid relation-type (`rel="next,"`), and an illegal parameter name (`bad@name`) all pass, the first two reading as termination. **GAP: transcribe tchar/qdtext/quoted-pair/relation-type from the RFC text and reject every illegal character.** | ENFORCED: GH-P-CH-ORIGIN | ACCEPTED RESIDUAL: GH-A-FR-ATOMICITY |
 | 语法 syntax | ENFORCED (as part of GH-T-WF-BODY: full-input Unmarshal, empty/null rejected) | N/A | ENFORCED (GH-T-AM-DUPKEYS runs before decode at every object level) | N/A | N/A |
 | Schema | ENFORCED: GH-S-WF-PRESENCE, GH-S-WF-EXACTCASE (both REST root paths and GraphQL) | ENFORCED: GH-S-BD-GQLIDENTITY, GH-S-BD-RESTIDENTITY (full canonical repository_url identity) | ENFORCED (presence vs null vs zero vs wrong-case are distinct facts, same IDs) | N/A | N/A |
 | 语义 semantic | ENFORCED: GH-SE-WF-INVARIANTS (unified Validate on opaque types) | ENFORCED (self-parent/self-blocker inside the unified invariants) | ENFORCED (duplicate labels/blockers fail, unified invariants) | N/A | N/A |
 | 聚合 aggregation | ENFORCED: GH-A-WF-CONSISTENCY | ENFORCED (facts belong to the requested issue; enforced in Build) | ENFORCED (contradictions fail rather than resolve) | N/A | ENFORCED: GH-A-FR-STATES; GH-A-FR-ATOMICITY is ACCEPTED RESIDUAL |
-| 消费 consumption | ENFORCED: GH-C-WF-UNFORGEABLE (opaque facts, no public mint, scope takes the concrete client), GH-C-WF-MULTICONTROL | ENFORCED: GH-C-BD-FETCHFAIL | N/A | N/A | N/A |
+| 消费 consumption | DOWNGRADED (round 10): opaque facts removed value-forging, but the exported `NewWithBase` constructor is a public mint — any consumer points the client at a self-controlled server whose self-reported `repository_url`/`nameWithOwner` come from the same attacker, and scope.FromMilestone accepts the result (the reviewer's stub repro). GH-C-WF-MULTICONTROL stays ENFORCED at its tested scope. **GAP: test authority must exist only inside test compilation (export_test.go), never via a production export.** | ENFORCED: GH-C-BD-FETCHFAIL | N/A | N/A | N/A |
 
 ## Primitive failure semantics
 
