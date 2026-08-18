@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ai-daming/qianshou/apps/control/internal/depscli"
 	"github.com/ai-daming/qianshou/apps/control/internal/runner"
 	"github.com/ai-daming/qianshou/apps/control/internal/server"
 )
@@ -24,6 +25,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "serve:", err)
 			os.Exit(1)
 		}
+	case "can-start":
+		depscli.Main()
 	case "run":
 		if err := runner.Run(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "run:", err)
@@ -38,5 +41,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: qianshou <serve|run> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: qianshou <serve|run|can-start> [flags]")
 }
