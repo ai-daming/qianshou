@@ -1,7 +1,6 @@
 package obligations
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -24,15 +23,7 @@ var validListings = map[string][]string{
 	"scope":   {"TestTwo"},
 }
 
-const validReadme = "matrix: GH-X-WF-ONE is enforced somewhere"
-
-// stub until the implementation lands in GREEN: the tamper tests below must
-// fail against it (they do — it accepts everything), proving RED.
-func Check(manifest []byte, listings map[string][]string, readme string) error {
-	_ = json.Marshal
-	_ = strings.TrimSpace
-	return nil
-}
+const validReadme = "matrix: GH-X-WF-ONE is enforced; GH-X-RS-TWO is a residual"
 
 func TestValidManifestPasses(t *testing.T) {
 	if err := Check([]byte(validManifest), validListings, validReadme); err != nil {

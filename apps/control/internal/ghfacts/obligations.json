@@ -1,220 +1,285 @@
-[
-  {
-    "id": "GH-T-WF-LIMIT",
-    "layer": "transport",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestRestResponseOverLimitFailsClosed",
-      "TestRestTrailingGarbageBeyondLimitFailsClosed",
-      "TestGraphQLTrailingGarbageBeyondLimitFailsClosed"
-    ]
-  },
-  {
-    "id": "GH-T-WF-BODY",
-    "layer": "transport",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": ["TestListMilestoneIssuesFailsClosedOnNullBody", "TestGetIssueFailsClosedOnNullBody"]
-  },
-  {
-    "id": "GH-T-AM-DUPKEYS",
-    "layer": "transport",
-    "dimension": "ambiguity",
-    "status": "ENFORCED",
-    "tests": ["TestNetworkJSONRejectsDuplicateKeys"]
-  },
-  {
-    "id": "GH-T-AM-UTF8",
-    "layer": "transport",
-    "dimension": "ambiguity",
-    "status": "ENFORCED",
-    "tests": ["TestDecoderEquivalenceClassesFailClosed"]
-  },
-  {
-    "id": "GH-T-CH-DEADLINE",
-    "layer": "transport",
-    "dimension": "channel",
-    "status": "ENFORCED",
-    "tests": ["TestRequestsTimeOutInsteadOfHanging"]
-  },
-  {
-    "id": "GH-T-CH-MEDIATYPE",
-    "layer": "transport",
-    "dimension": "channel",
-    "status": "ENFORCED",
-    "tests": ["TestContentTypeMustBeExactApplicationJSON", "TestHeaderCardinalityIsChecked"]
-  },
-  {
-    "id": "GH-T-CH-REDIRECT",
-    "layer": "transport",
-    "dimension": "channel",
-    "status": "ENFORCED",
-    "tests": ["TestRedirectsAreRefusedAndTokenNeverLeaves"]
-  },
-  {
-    "id": "GH-P-WF-PAGEINFO",
-    "layer": "protocol",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestRelationshipsFailsClosedWhenInnerSchemaMissing",
-      "TestRelationshipsFailsClosedWhenNextPageLacksCursor"
-    ]
-  },
-  {
-    "id": "GH-P-WF-TERMINATION",
-    "layer": "protocol",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestListMilestoneIssuesFollowsLinkHeaderNext",
-      "TestListMilestoneIssuesFailsClosedOnUnboundedPagination",
-      "TestListMilestoneIssuesPaginatesAndFiltersPullRequests"
-    ]
-  },
-  {
-    "id": "GH-P-BD-NEXTURL",
-    "layer": "protocol",
-    "dimension": "binding",
-    "status": "ENFORCED",
-    "tests": ["TestNextLinkMustStayWithinRequestedScope"]
-  },
-  {
-    "id": "GH-P-AM-GRAMMAR",
-    "layer": "protocol",
-    "dimension": "ambiguity",
-    "status": "ENFORCED",
-    "tests": [
-      "TestAllLinkHeaderValuesAreConsidered",
-      "TestLinkRepeatedRelParamKeepsFirstOccurrence",
-      "TestLinkUnclosedQuoteFailsClosed",
-      "TestLinkQuotedPairInTitleParam",
-      "TestLinkQuotedPairInRelValue",
-      "TestLinkMissingRequiredRelFailsClosed",
-      "TestLinkRelationTypeListsAreParsedPerRFC8288"
-    ]
-  },
-  {
-    "id": "GH-P-CH-ORIGIN",
-    "layer": "protocol",
-    "dimension": "channel",
-    "status": "ENFORCED",
-    "tests": ["TestListMilestoneIssuesFailsClosedOnForeignNextLink"]
-  },
-  {
-    "id": "GH-S-WF-PRESENCE",
-    "layer": "schema",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestRelationshipsFailsClosedOnPresenceDrift",
-      "TestRelationshipsFailsClosedWhenInnerSchemaMissing",
-      "TestListMilestoneIssuesFailsClosedOnTitleDrift",
-      "TestGetIssueFailsClosedOnTitleDrift",
-      "TestListMilestoneIssuesFailsClosedOnItemDrift"
-    ]
-  },
-  {
-    "id": "GH-S-WF-EXACTCASE",
-    "layer": "schema",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": ["TestGetIssueRootEnforcesExactCaseSchema", "TestDecoderEquivalenceClassesFailClosed"]
-  },
-  {
-    "id": "GH-S-BD-GQLIDENTITY",
-    "layer": "schema",
-    "dimension": "binding",
-    "status": "ENFORCED",
-    "tests": ["TestGraphQLResponseMustEchoRequestedIdentity"]
-  },
-  {
-    "id": "GH-S-BD-RESTIDENTITY",
-    "layer": "schema",
-    "dimension": "binding",
-    "status": "ENFORCED",
-    "tests": [
-      "TestRestResponsesMustBindToRequestedRepository",
-      "TestGetIssueFailsClosedOnNumberMismatch",
-      "TestGetIssueRejectsForeignRepositoryResponse",
-      "TestRepositoryURLMustMatchCanonicalAPIIdentity"
-    ]
-  },
-  {
-    "id": "GH-SE-WF-INVARIANTS",
-    "layer": "semantic",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestListMilestoneIssuesFailsClosedOnItemDrift",
-      "TestListMilestoneIssuesFailsClosedOnDuplicateLabels"
-    ]
-  },
-  {
-    "id": "GH-A-WF-CONSISTENCY",
-    "layer": "aggregation",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestRelationshipsFailClosedOnContradictoryPages",
-      "TestListMilestoneIssuesFailsClosedOnDuplicateNumbers"
-    ]
-  },
-  {
-    "id": "GH-A-FR-STATES",
-    "layer": "aggregation",
-    "dimension": "freshness",
-    "status": "ENFORCED",
-    "tests": ["TestFromMilestoneFailsClosedOnCrossFactStateContradictions"]
-  },
-  {
-    "id": "GH-A-FR-ATOMICITY",
-    "layer": "aggregation",
-    "dimension": "freshness",
-    "status": "ACCEPTED_RESIDUAL",
-    "tests": [],
-    "note": "undetectable without re-listing; observable contradictions are GH-A-FR-STATES"
-  },
-  {
-    "id": "GH-C-WF-UNFORGEABLE",
-    "layer": "consumption",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": [
-      "TestZeroValueFactsAreRejected",
-      "TestFromMilestoneDerivesFlatScope",
-      "TestFromMilestoneDetectsInitiativeByLabelOnly"
-    ]
-  },
-  {
-    "id": "GH-C-BD-FETCHFAIL",
-    "layer": "consumption",
-    "dimension": "binding",
-    "status": "ENFORCED",
-    "tests": ["TestFromMilestoneFailsClosedWhenRelationshipFetchFails"]
-  },
-  {
-    "id": "GH-C-WF-MULTICONTROL",
-    "layer": "consumption",
-    "dimension": "well-formedness",
-    "status": "ENFORCED",
-    "tests": ["TestFromMilestoneFailsClosedWithMultipleControlIssues"]
-  },
-  {
-    "id": "GH-ENV-PROXY",
-    "layer": "transport",
-    "dimension": "channel",
-    "status": "UNVERIFIED",
-    "tests": [],
-    "note": "HTTP(S)_PROXY handling of the default transport is not pinned by a test"
-  },
-  {
-    "id": "GH-ENV-TLS",
-    "layer": "transport",
-    "dimension": "channel",
-    "status": "UNVERIFIED",
-    "tests": [],
-    "note": "system root store trust is not pinned by a test"
-  }
-]
+{
+  "obligations": [
+    {
+      "id": "GH-T-WF-LIMIT",
+      "layer": "transport",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestRestResponseOverLimitFailsClosed",
+        "ghfacts:TestRestTrailingGarbageBeyondLimitFailsClosed",
+        "ghfacts:TestGraphQLTrailingGarbageBeyondLimitFailsClosed"
+      ]
+    },
+    {
+      "id": "GH-T-WF-BODY",
+      "layer": "transport",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnNullBody",
+        "ghfacts:TestGetIssueFailsClosedOnNullBody"
+      ]
+    },
+    {
+      "id": "GH-T-WF-STATUS",
+      "layer": "transport",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestListMilestoneIssuesFailsClosed",
+        "ghfacts:TestRelationshipsFailsClosed"
+      ]
+    },
+    {
+      "id": "GH-T-AM-DUPKEYS",
+      "layer": "transport",
+      "dimension": "ambiguity",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestNetworkJSONRejectsDuplicateKeys"]
+    },
+    {
+      "id": "GH-T-AM-UTF8",
+      "layer": "transport",
+      "dimension": "ambiguity",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestDecoderEquivalenceClassesFailClosed"]
+    },
+    {
+      "id": "GH-T-CH-DEADLINE",
+      "layer": "transport",
+      "dimension": "channel",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestRequestsTimeOutInsteadOfHanging"]
+    },
+    {
+      "id": "GH-T-CH-MEDIATYPE",
+      "layer": "transport",
+      "dimension": "channel",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestContentTypeMustBeExactApplicationJSON",
+        "ghfacts:TestHeaderCardinalityIsChecked",
+        "ghfacts:TestNonJSONContentTypeFailsClosed"
+      ]
+    },
+    {
+      "id": "GH-T-CH-REDIRECT",
+      "layer": "transport",
+      "dimension": "channel",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestRedirectsAreRefusedAndTokenNeverLeaves"]
+    },
+    {
+      "id": "GH-P-WF-PAGEINFO",
+      "layer": "protocol",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestRelationshipsFailsClosedWhenInnerSchemaMissing",
+        "ghfacts:TestRelationshipsFailsClosedWhenNextPageLacksCursor"
+      ]
+    },
+    {
+      "id": "GH-P-WF-TERMINATION",
+      "layer": "protocol",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestListMilestoneIssuesFollowsLinkHeaderNext",
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnUnboundedPagination",
+        "ghfacts:TestListMilestoneIssuesPaginatesAndFiltersPullRequests",
+        "ghfacts:TestRelationshipsPaginatesBlockedByBeyondFirstPage"
+      ]
+    },
+    {
+      "id": "GH-P-BD-NEXTURL",
+      "layer": "protocol",
+      "dimension": "binding",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestNextLinkMustStayWithinRequestedScope"]
+    },
+    {
+      "id": "GH-P-AM-GRAMMAR",
+      "layer": "protocol",
+      "dimension": "ambiguity",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestAllLinkHeaderValuesAreConsidered",
+        "ghfacts:TestLinkRepeatedRelParamKeepsFirstOccurrence",
+        "ghfacts:TestLinkUnclosedQuoteFailsClosed",
+        "ghfacts:TestLinkQuotedPairInTitleParam",
+        "ghfacts:TestLinkQuotedPairInRelValue",
+        "ghfacts:TestLinkMissingRequiredRelFailsClosed",
+        "ghfacts:TestLinkRelationTypeListsAreParsedPerRFC8288",
+        "ghfacts:TestLinkGrammarRejectsMalformedABNF",
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnMalformedLinkHeader"
+      ]
+    },
+    {
+      "id": "GH-P-CH-ORIGIN",
+      "layer": "protocol",
+      "dimension": "channel",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestListMilestoneIssuesFailsClosedOnForeignNextLink"]
+    },
+    {
+      "id": "GH-S-WF-PRESENCE",
+      "layer": "schema",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestRelationshipsFailsClosedOnPresenceDrift",
+        "ghfacts:TestRelationshipsFailsClosedWhenInnerSchemaMissing",
+        "ghfacts:TestRelationshipsFailsClosedWhenBlockedBySchemaMissing",
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnTitleDrift",
+        "ghfacts:TestGetIssueFailsClosedOnTitleDrift",
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnItemDrift",
+        "ghfacts:TestRelationshipsAcceptsExplicitNullParent",
+        "ghfacts:TestRelationshipsHandlesNoParentNoDeps",
+        "ghfacts:TestRelationshipsParsesParentAndBlockedBy"
+      ]
+    },
+    {
+      "id": "GH-S-WF-EXACTCASE",
+      "layer": "schema",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestGetIssueRootEnforcesExactCaseSchema",
+        "ghfacts:TestDecoderEquivalenceClassesFailClosed"
+      ]
+    },
+    {
+      "id": "GH-S-BD-GQLIDENTITY",
+      "layer": "schema",
+      "dimension": "binding",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestGraphQLResponseMustEchoRequestedIdentity"]
+    },
+    {
+      "id": "GH-S-BD-RESTIDENTITY",
+      "layer": "schema",
+      "dimension": "binding",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestRestResponsesMustBindToRequestedRepository",
+        "ghfacts:TestGetIssueFailsClosedOnNumberMismatch",
+        "ghfacts:TestGetIssueRejectsForeignRepositoryResponse",
+        "ghfacts:TestRepositoryURLMustMatchCanonicalAPIIdentity"
+      ]
+    },
+    {
+      "id": "GH-SE-WF-INVARIANTS",
+      "layer": "semantic",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnItemDrift",
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnDuplicateLabels",
+        "ghfacts:TestFromMilestoneAttachesClassificationIncludingInvalid"
+      ]
+    },
+    {
+      "id": "GH-SE-BD-SELFREF",
+      "layer": "semantic",
+      "dimension": "binding",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestRelationshipsFailClosedOnSelfReferences"]
+    },
+    {
+      "id": "GH-A-WF-CONSISTENCY",
+      "layer": "aggregation",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestRelationshipsFailClosedOnContradictoryPages",
+        "ghfacts:TestListMilestoneIssuesFailsClosedOnDuplicateNumbers"
+      ]
+    },
+    {
+      "id": "GH-A-FR-STATES",
+      "layer": "aggregation",
+      "dimension": "freshness",
+      "status": "ENFORCED",
+      "tests": [
+        "ghfacts:TestFromMilestoneFailsClosedOnCrossFactStateContradictions",
+        "scope:TestUnsatisfiedDependenciesUsesBlockerState"
+      ]
+    },
+    {
+      "id": "GH-A-FR-ATOMICITY",
+      "layer": "aggregation",
+      "dimension": "freshness",
+      "status": "ACCEPTED_RESIDUAL",
+      "note": "undetectable without re-listing; observable contradictions are GH-A-FR-STATES"
+    },
+    {
+      "id": "GH-C-WF-UNFORGEABLE",
+      "layer": "consumption",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": [
+        "scope:TestZeroValueFactsAreRejected",
+        "ghfacts:TestFromMilestoneDerivesFlatScope",
+        "ghfacts:TestFromMilestoneDetectsInitiativeByLabelOnly",
+        "ghfacts:TestEndpointOverrideExistsOnlyInTestCompilation"
+      ]
+    },
+    {
+      "id": "GH-C-BD-FETCHFAIL",
+      "layer": "consumption",
+      "dimension": "binding",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestFromMilestoneFailsClosedWhenRelationshipFetchFails"]
+    },
+    {
+      "id": "GH-C-WF-MULTICONTROL",
+      "layer": "consumption",
+      "dimension": "well-formedness",
+      "status": "ENFORCED",
+      "tests": ["ghfacts:TestFromMilestoneFailsClosedWithMultipleControlIssues"]
+    },
+    {
+      "id": "GH-ENV-PROXY",
+      "layer": "transport",
+      "dimension": "channel",
+      "status": "UNVERIFIED",
+      "note": "HTTP(S)_PROXY handling of the default transport is not pinned by a test"
+    },
+    {
+      "id": "GH-ENV-TLS",
+      "layer": "transport",
+      "dimension": "channel",
+      "status": "UNVERIFIED",
+      "note": "system root store trust is not pinned by a test"
+    }
+  ],
+  "uncited": [
+    {
+      "package": "scope",
+      "test": "TestQianshouM1LiveSnapshot",
+      "reason": "AC-5 live evidence against real GitHub, credential-gated"
+    },
+    {
+      "package": "scope",
+      "test": "TestMamamateM7LiveSnapshot",
+      "reason": "AC-5 live evidence, credential-gated"
+    },
+    {
+      "package": "scope",
+      "test": "TestBootstrapHomeLoadsWhenPresent",
+      "reason": "AC-6 live evidence, environment-gated"
+    },
+    {
+      "package": "scope",
+      "test": "TestMigrateRealV0ConfigFile",
+      "reason": "AC-1 migration evidence against the machine-local V0 file, environment-gated"
+    },
+    {
+      "package": "ghfacts",
+      "test": "TestListMilestoneIssuesRejectsBadSlugAndEmptyToken",
+      "reason": "request preconditions (slug/token shape), before any transport obligation applies"
+    }
+  ]
+}

@@ -35,6 +35,4 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go build ./cmd/qianshou
-      - name: Obligations manifest check
-        working-directory: .
-        run: sh scripts/check-obligations.sh
+      - run: go run ./internal/obligations/cmd/check

@@ -211,17 +211,6 @@ func New(token string) (*Client, error) {
 	return newClient(token, defaultRestBase, defaultGqlURL, http.DefaultClient)
 }
 
-// NewWithBase returns a client against explicit REST and GraphQL endpoints.
-// Endpoints change where requests go, never what counts as a fact: the full
-// decode validation chain (identity echo, canonical repository_url, strict
-// scan) applies unchanged, so this grants no minting authority.
-func NewWithBase(token, restBase, gqlURL string, hc *http.Client) (*Client, error) {
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	return newClient(token, restBase, gqlURL, hc)
-}
-
 func newClient(token, restBase, gqlURL string, hc *http.Client) (*Client, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("ghfacts 需要 GitHub 凭据：空 token 会把读取失败伪装成空事实，必须 fail closed")
@@ -977,54 +966,71 @@ func parseLinkHeader(values []string) ([]parsedLink, error) {
 				default:
 					return nil, fmt.Errorf("Link 语法不可解释：%q", snippetAt(header, i))
 				}
+				// link-param = token BWS [ "=" BWS ( token / quoted-string ) ]
 				nameStart := i
-				for i < n && header[i] != '=' && header[i] != ';' && header[i] != ',' &&
-					header[i] != ' ' && header[i] != '\t' {
+				for i < n && isTchar(header[i]) {
 					i++
+				}
+				if i == nameStart {
+					return nil, fmt.Errorf("Link 参数名不是合法 token：%q", snippetAt(header, i))
 				}
 				name := strings.ToLower(header[nameStart:i])
 				skipOWS()
-				if i >= n || header[i] != '=' {
-					return nil, fmt.Errorf("Link 参数缺少 =：%q", snippetAt(header, nameStart))
-				}
-				i++
-				skipOWS()
 				var value string
-				if i < n && header[i] == '"' {
-					var b strings.Builder
+				if i < n && header[i] == '=' {
 					i++
-					closed := false
-					for i < n {
-						c := header[i]
-						if c == '\\' {
-							if i+1 >= n {
-								return nil, fmt.Errorf("quoted-pair 悬空：%q", snippetAt(header, i))
+					skipOWS()
+					if i < n && header[i] == '"' {
+						// RFC 9110 §5.6.4 quoted-string:
+						// DQUOTE *( qdtext / quoted-pair ) DQUOTE
+						var b strings.Builder
+						i++
+						closed := false
+						for i < n {
+							c := header[i]
+							if c == '\\' {
+								if i+1 >= n || !isQuotedPairOctet(header[i+1]) {
+									return nil, fmt.Errorf("非法 quoted-pair：%q", snippetAt(header, i))
+								}
+								b.WriteByte(header[i+1])
+								i += 2
+								continue
 							}
-							b.WriteByte(header[i+1])
-							i += 2
-							continue
-						}
-						if c == '"' {
-							closed = true
+							if c == '"' {
+								closed = true
+								i++
+								break
+							}
+							if !isQdtext(c) {
+								return nil, fmt.Errorf("引号内非法字符 U+%04X（不在 qdtext）：%q", c, snippetAt(header, i))
+							}
+							b.WriteByte(c)
 							i++
-							break
 						}
-						b.WriteByte(c)
-						i++
+						if !closed {
+							return nil, fmt.Errorf("Link 参数引号未闭合：%q", snippetAt(header, nameStart))
+						}
+						value = b.String()
+					} else {
+						// token value: 1*tchar
+						vs := i
+						for i < n && isTchar(header[i]) {
+							i++
+						}
+						if i == vs {
+							return nil, fmt.Errorf("Link 参数值不是合法 token：%q", snippetAt(header, i))
+						}
+						value = header[vs:i]
 					}
-					if !closed {
-						return nil, fmt.Errorf("Link 参数引号未闭合：%q", snippetAt(header, nameStart))
-					}
-					value = b.String()
-				} else {
-					vs := i
-					for i < n && header[i] != ',' && header[i] != ';' && header[i] != ' ' && header[i] != '\t' {
-						i++
-					}
-					value = header[vs:i]
 				}
 				if name == "rel" && !sawRel {
 					sawRel = true
+					// rel = relation-type *( 1*SP relation-type ) per RFC 8288 §3.3
+					for _, rel := range strings.Fields(value) {
+						if !isRelationType(rel) {
+							return nil, fmt.Errorf("rel 值 %q 不是合法的 relation-type（reg-rel-type 为小写字母开头的小写/数字/./- 或绝对 URI）", rel)
+						}
+					}
 					link.rels = strings.Fields(value)
 				}
 			}
@@ -1035,6 +1041,47 @@ func parseLinkHeader(values []string) ([]parsedLink, error) {
 		}
 	}
 	return links, nil
+}
+
+// isTchar reports whether c belongs to RFC 9110 §5.6.2 tchar.
+func isTchar(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' ||
+		c == '*' || c == '+' || c == '-' || c == '.' || c == '^' || c == '_' ||
+		c == '`' || c == '|' || c == '~'
+}
+
+// isQdtext reports whether c belongs to RFC 9110 §5.6.4 qdtext:
+// HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text.
+func isQdtext(c byte) bool {
+	return c == '\t' || c == ' ' || c == 0x21 ||
+		(c >= 0x23 && c <= 0x5B) || (c >= 0x5D && c <= 0x7E) || c >= 0x80
+}
+
+// isQuotedPairOctet reports whether c may follow a backslash in a
+// quoted-pair: HTAB / SP / VCHAR / obs-text.
+func isQuotedPairOctet(c byte) bool {
+	return c == '\t' || c == ' ' || (c >= 0x21 && c <= 0x7E) || c >= 0x80
+}
+
+// isRelationType reports whether s is an RFC 8288 §3.3 relation-type:
+// a reg-rel-type (LOALPHA *( LOALPHA / DIGIT / "." / "-" )) or an
+// absolute-URI ext-rel-type.
+func isRelationType(s string) bool {
+	if s == "" {
+		return false
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		for i := 1; i < len(s); i++ {
+			c := s[i]
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-') {
+				return false
+			}
+		}
+		return true
+	}
+	u, err := url.Parse(s)
+	return err == nil && u.IsAbs() && u.Scheme != ""
 }
 
 func snippetAt(s string, i int) string {
