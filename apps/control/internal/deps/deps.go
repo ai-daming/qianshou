@@ -90,9 +90,13 @@ func CanStart(ctx context.Context, token, gqlEndpoint, repo string, issue int, h
 		return Judgment{}, fmt.Errorf("查询 %s#%d 失败（不得当作无依赖）：%w", repo, issue, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	const bodyLimit = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
 	if err != nil {
 		return Judgment{}, fmt.Errorf("读取 %s#%d 响应失败：%w", repo, issue, err)
+	}
+	if len(body) > bodyLimit {
+		return Judgment{}, fmt.Errorf("%s#%d 的响应超过 %d 字节上限（截断的响应不得当作完整事实）", repo, issue, bodyLimit)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return Judgment{}, fmt.Errorf("查询 %s#%d 返回 HTTP %d：%s", repo, issue, resp.StatusCode, snippet(body))
@@ -108,10 +112,10 @@ func CanStart(ctx context.Context, token, gqlEndpoint, repo string, issue int, h
 				Issue         *struct {
 					Number    int `json:"number"`
 					BlockedBy *struct {
-						PageInfo struct {
-							HasNextPage bool `json:"hasNextPage"`
+						PageInfo *struct {
+							HasNextPage *bool `json:"hasNextPage"`
 						} `json:"pageInfo"`
-						Nodes []struct {
+						Nodes *[]struct {
 							Number int    `json:"number"`
 							State  string `json:"state"`
 						} `json:"nodes"`
@@ -119,6 +123,9 @@ func CanStart(ctx context.Context, token, gqlEndpoint, repo string, issue int, h
 				} `json:"issue"`
 			} `json:"repository"`
 		} `json:"data"`
+	}
+	if err := noDuplicateKeys(body); err != nil {
+		return Judgment{}, fmt.Errorf("%s#%d 的响应存在重复键（矛盾不得择一）：%w", repo, issue, err)
 	}
 	if err := json.Unmarshal(body, &gql); err != nil {
 		return Judgment{}, fmt.Errorf("查询 %s#%d 的响应不是合法 JSON：%w", repo, issue, err)
@@ -148,13 +155,22 @@ func CanStart(ctx context.Context, token, gqlEndpoint, repo string, issue int, h
 	if blockedBy == nil {
 		return Judgment{}, fmt.Errorf("%s#%d 的响应缺少 blockedBy（不得当作无依赖）", repo, issue)
 	}
-	if blockedBy.PageInfo.HasNextPage {
+	if blockedBy.PageInfo == nil {
+		return Judgment{}, fmt.Errorf("%s#%d 的响应缺少 pageInfo（无法确认是否看全）", repo, issue)
+	}
+	if blockedBy.PageInfo.HasNextPage == nil {
+		return Judgment{}, fmt.Errorf("%s#%d 的响应缺少 hasNextPage（无法确认是否看全）", repo, issue)
+	}
+	if *blockedBy.PageInfo.HasNextPage {
 		return Judgment{}, fmt.Errorf("%s#%d 的依赖超过一页，无法判断完整（不得截断当作全部）", repo, issue)
+	}
+	if blockedBy.Nodes == nil {
+		return Judgment{}, fmt.Errorf("%s#%d 的响应缺少或置 null nodes（不得当作无依赖）", repo, issue)
 	}
 
 	j := Judgment{Issue: issue}
 	seen := make(map[int]bool)
-	for _, node := range blockedBy.Nodes {
+	for _, node := range *blockedBy.Nodes {
 		if node.Number <= 0 {
 			return Judgment{}, fmt.Errorf("%s#%d 的依赖缺少编号（不得当作无依赖）", repo, issue)
 		}
@@ -174,6 +190,63 @@ func CanStart(ctx context.Context, token, gqlEndpoint, repo string, issue int, h
 	return j, nil
 }
 
+// noDuplicateKeys 拒绝对象里（大小写等价意义上的）重复键：
+// 外部证据自相矛盾时不得靠 last-wins 择一。
+func noDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]bool)
+			for dec.More() {
+				keyTok, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, _ := keyTok.(string)
+				for prev := range seen {
+					if strings.EqualFold(prev, key) {
+						return fmt.Errorf("对象存在重复键 %q 与 %q", prev, key)
+					}
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil {
+				return err
+			}
+		case '[':
+			for dec.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("第一个 JSON 值之后还有额外内容")
+	}
+	return nil
+}
+
 func snippet(body []byte) string {
 	s := strings.TrimSpace(string(body))
 	if len(s) > 200 {
@@ -190,7 +263,9 @@ func ResolveToken(ctx context.Context) (string, error) {
 		}
 	}
 	if path, err := execLookPath("gh"); err == nil {
-		out, err := execCommandContext(ctx, path, "auth", "token")
+		// 显式绑定 github.com：GH_HOST 指向企业版时取回的企业 token
+		// 绝不能被发给公共 api.github.com。
+		out, err := execCommandContext(ctx, path, "auth", "token", "--hostname", "github.com")
 		if err != nil {
 			return "", fmt.Errorf("gh auth token 执行失败（凭据归 gh CLI 所有）：%w", err)
 		}
