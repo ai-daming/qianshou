@@ -1058,3 +1058,58 @@ func TestRepositoryURLMustMatchCanonicalAPIIdentity(t *testing.T) {
 		})
 	}
 }
+
+// --- Round 9 SELF-ATTACK on the round-8 link validator/splitter pair ---
+
+func TestLinkQuotedPairInTitleParam(t *testing.T) {
+	var requests int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requests++
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; title="a\\"b"; rel="next"`, r.Host, r.URL.Path))
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+			return
+		}
+		fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+	}, nil)
+	issues, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err != nil {
+		t.Fatalf("ListMilestoneIssues: %v", err)
+	}
+	if requests != 2 || len(issues) != 2 {
+		t.Fatalf(`legal quoted-pair title="a\\"b" desynchronized the splitter and swallowed next: requests=%d issues=%d`, requests, len(issues))
+	}
+}
+
+func TestLinkQuotedPairInRelValue(t *testing.T) {
+	var requests int
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requests++
+		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="ne\\xt"`, r.Host, r.URL.Path))
+			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+			return
+		}
+		fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+	}, nil)
+	issues, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err != nil {
+		t.Fatalf("ListMilestoneIssues: %v", err)
+	}
+	if requests != 2 || len(issues) != 2 {
+		t.Fatalf(`rel="ne\\xt" unquotes to next per RFC 9110 quoted-pair: requests=%d issues=%d`, requests, len(issues))
+	}
+}
+
+func TestLinkMissingRequiredRelFailsClosed(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>`, r.Host, r.URL.Path))
+		fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+	}, nil)
+	if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatalf("link-value without the required rel parameter read as normal termination (RFC 8288 §3.3)")
+	}
+}

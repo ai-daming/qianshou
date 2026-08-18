@@ -324,3 +324,36 @@ func TestConstructorsRejectInvalidFacts(t *testing.T) {
 		t.Fatalf("empty label constructible")
 	}
 }
+
+// --- Round 9 SELF-ATTACK: these tests attack MY OWN round-8 mechanisms,
+// not the review's findings. An attacker asks: who can mint the trusted
+// state, and does the stamp bind the content? ---
+
+func TestPublicConstructorIsNotAMint(t *testing.T) {
+	// No GitHub read happened; the public constructors alone must not grant
+	// read authority to a Facts-level caller.
+	issueFact, err := ghfacts.NewIssue(1, "x", "open", []string{"type:milestone-control", "workflow:control", "rigor:standard"})
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+	relFact, err := ghfacts.NewRelationships(1, nil, nil)
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+	snap, err := Build("m1", []ghfacts.Issue{issueFact}, map[int]ghfacts.Relationships{1: relFact})
+	if err == nil {
+		t.Fatalf("public constructor minted read authority: snapshot fabricated with zero reads: %+v", snap)
+	}
+}
+
+func TestStampedFactsResistMutation(t *testing.T) {
+	relFact, err := ghfacts.NewRelationships(1, nil, []ghfacts.BlockedIssue{{Number: 2, State: "OPEN"}})
+	if err != nil {
+		t.Fatalf("construct: %v", err)
+	}
+	relFact.BlockedBy = nil // the stamp must not survive content mutation
+	issueFact, _ := ghfacts.NewIssue(1, "x", "open", []string{"workflow:delivery", "type:technical", "rigor:standard"})
+	if _, err := Build("m1", []ghfacts.Issue{issueFact}, map[int]ghfacts.Relationships{1: relFact}); err == nil {
+		t.Fatalf("mutated fact kept its stamp: 'blocked by #2' rewritten to 'no dependencies'")
+	}
+}
