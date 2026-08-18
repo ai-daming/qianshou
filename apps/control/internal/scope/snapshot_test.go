@@ -2,7 +2,10 @@ package scope
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -10,72 +13,138 @@ import (
 	"github.com/ai-daming/qianshou/apps/control/internal/ghfacts"
 )
 
-func issue(number int, labels ...string) ghfacts.Issue {
-	item, err := ghfacts.NewIssue(number, fmt.Sprintf("issue %d", number), "open", labels)
-	if err != nil {
-		panic(err)
-	}
-	return item
+// Facts cannot be constructed outside ghfacts any more, so these tests stub
+// the SERVER, not the fact layer: every fixture flows through the real
+// decode exits and carries the full binding/strictness chain with it.
+
+type stubIssue struct {
+	number int
+	labels []string
+	state  string
 }
 
-func rel(number int, parent *int, blocked ...ghfacts.BlockedIssue) ghfacts.Relationships {
-	r, err := ghfacts.NewRelationships(number, parent, blocked)
-	if err != nil {
-		panic(err)
-	}
-	return r
+type stubRel struct {
+	parent    int
+	hasParent bool
+	blockedBy []ghfacts.BlockedIssue
 }
 
-func ptr(n int) *int { return &n }
-
-func TestBuildFlatScopeWithoutControlIssue(t *testing.T) {
-	issues := []ghfacts.Issue{
-		issue(10, "workflow:delivery", "type:technical", "rigor:standard"),
-		issue(11),
+// scopeStubClient serves a milestone listing and per-issue relationships and
+// returns a real client pointed at the stubs.
+func scopeStubClient(t *testing.T, issues []stubIssue, rels map[int]stubRel, failRelAt map[int]bool) *ghfacts.Client {
+	t.Helper()
+	item := func(s stubIssue) string {
+		state := s.state
+		if state == "" {
+			state = "open"
+		}
+		labels := make([]string, 0, len(s.labels))
+		for _, l := range s.labels {
+			labels = append(labels, fmt.Sprintf(`{"name":%q}`, l))
+		}
+		return fmt.Sprintf(`{"number":%d,"title":"issue %d","state":%q,"labels":[%s],"repository_url":"https://api.github.com/repos/ai-daming/qianshou","milestone":{"number":1}}`,
+			s.number, s.number, state, strings.Join(labels, ","))
 	}
-	rels := map[int]ghfacts.Relationships{10: rel(10, nil), 11: rel(11, nil)}
-	snap, err := Build("s", issues, rels)
+	relBody := func(n int, r stubRel) string {
+		parent := "null"
+		if r.hasParent {
+			parent = fmt.Sprintf(`{"number":%d}`, r.parent)
+		}
+		nodes := make([]string, 0, len(r.blockedBy))
+		for _, b := range r.blockedBy {
+			nodes = append(nodes, fmt.Sprintf(`{"number":%d,"state":%q}`, b.Number, b.State))
+		}
+		return fmt.Sprintf(`{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":%d,"parent":%s,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[%s]}}}}}`,
+			n, parent, strings.Join(nodes, ","))
+	}
+	rest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		items := make([]string, 0, len(issues))
+		for _, s := range issues {
+			items = append(items, item(s))
+		}
+		fmt.Fprintf(w, "[%s]", strings.Join(items, ","))
+	}))
+	t.Cleanup(rest.Close)
+	gql := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var req struct {
+			Variables struct {
+				Number int `json:"number"`
+			} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode graphql request: %v", err)
+			return
+		}
+		if failRelAt[req.Variables.Number] {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"message":"injected failure"}`)
+			return
+		}
+		rel, ok := rels[req.Variables.Number]
+		if !ok {
+			rel = stubRel{}
+		}
+		fmt.Fprint(w, relBody(req.Variables.Number, rel))
+	}))
+	t.Cleanup(gql.Close)
+	client, err := ghfacts.NewWithBase("test-token", rest.URL, gql.URL, rest.Client())
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("NewWithBase: %v", err)
 	}
-	if snap.Mode != ModeFlat {
-		t.Fatalf("mode = %q, want flat", snap.Mode)
+	return client
+}
+
+func TestFromMilestoneDerivesFlatScope(t *testing.T) {
+	client := scopeStubClient(t,
+		[]stubIssue{
+			{number: 10, labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}},
+			{number: 11},
+		},
+		map[int]stubRel{10: {}, 11: {}}, nil)
+	snap, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "s")
+	if err != nil {
+		t.Fatalf("FromMilestone: %v", err)
 	}
-	if snap.ControlIssue != 0 {
-		t.Fatalf("flat scope must not name a control issue, got %d", snap.ControlIssue)
-	}
-	if len(snap.Items) != 2 {
-		t.Fatalf("items = %d, want 2", len(snap.Items))
+	if snap.Mode != ModeFlat || snap.ControlIssue != 0 || len(snap.Items) != 2 {
+		t.Fatalf("snapshot = %s/%d items=%d, want flat/0/2", snap.Mode, snap.ControlIssue, len(snap.Items))
 	}
 }
 
-func TestBuildInitiativeDetectsUniqueControlIssueByLabelOnly(t *testing.T) {
+func TestFromMilestoneDetectsInitiativeByLabelOnly(t *testing.T) {
 	// The control label alone decides initiative mode, even when the rest of
 	// the classification is incomplete (rigor missing here).
-	issues := []ghfacts.Issue{
-		issue(1, "workflow:control", "type:milestone-control"),
-		issue(2, "workflow:delivery", "type:feature", "rigor:standard"),
-	}
-	rels := map[int]ghfacts.Relationships{1: rel(1, nil), 2: rel(2, ptr(1))}
-	snap, err := Build("m1", issues, rels)
+	client := scopeStubClient(t,
+		[]stubIssue{
+			{number: 1, labels: []string{"workflow:control", "type:milestone-control"}},
+			{number: 2, labels: []string{"workflow:delivery", "type:feature", "rigor:standard"}},
+		},
+		map[int]stubRel{1: {}, 2: {parent: 1, hasParent: true}}, nil)
+	snap, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1")
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("FromMilestone: %v", err)
 	}
 	if snap.Mode != ModeInitiative || snap.ControlIssue != 1 {
-		t.Fatalf("mode = %q control = %d, want initiative/1", snap.Mode, snap.ControlIssue)
+		t.Fatalf("mode = %s control = %d, want initiative/1", snap.Mode, snap.ControlIssue)
 	}
-	if snap.Items[1].Parent == nil || *snap.Items[1].Parent != 1 {
-		t.Fatalf("parent not carried: %+v", snap.Items[1])
+	for _, item := range snap.Items {
+		if item.Number == 2 {
+			if item.Parent == nil || *item.Parent != 1 {
+				t.Fatalf("parent not carried: %+v", item.Parent)
+			}
+		}
 	}
 }
 
-func TestBuildFailsClosedWithMultipleControlIssues(t *testing.T) {
-	issues := []ghfacts.Issue{
-		issue(1, "workflow:control", "type:milestone-control", "rigor:standard"),
-		issue(2, "type:milestone-control"),
-	}
-	rels := map[int]ghfacts.Relationships{1: rel(1, nil), 2: rel(2, nil)}
-	_, err := Build("m1", issues, rels)
+func TestFromMilestoneFailsClosedWithMultipleControlIssues(t *testing.T) {
+	client := scopeStubClient(t,
+		[]stubIssue{
+			{number: 1, labels: []string{"workflow:control", "type:milestone-control", "rigor:standard"}},
+			{number: 2, labels: []string{"type:milestone-control"}},
+		},
+		map[int]stubRel{1: {}, 2: {}}, nil)
+	_, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1")
 	if err == nil {
 		t.Fatalf("multiple control issues accepted")
 	}
@@ -84,40 +153,44 @@ func TestBuildFailsClosedWithMultipleControlIssues(t *testing.T) {
 	}
 }
 
-func TestBuildFailsClosedOnIncompleteRelationshipFacts(t *testing.T) {
-	issues := []ghfacts.Issue{issue(1, "workflow:delivery", "type:technical", "rigor:standard"), issue(2)}
-	rels := map[int]ghfacts.Relationships{1: rel(1, nil)} // #2 missing
-	_, err := Build("m1", issues, rels)
+func TestFromMilestoneFailsClosedWhenRelationshipFetchFails(t *testing.T) {
+	client := scopeStubClient(t,
+		[]stubIssue{
+			{number: 1, labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}},
+			{number: 2},
+		},
+		map[int]stubRel{1: {}}, map[int]bool{2: true})
+	_, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1")
 	if err == nil {
-		t.Fatalf("missing relationship facts silently treated as no dependencies")
+		t.Fatalf("relationship fetch failure must fail the whole snapshot")
 	}
 	if !strings.Contains(err.Error(), "#2") {
-		t.Fatalf("error must name the issue lacking facts: %v", err)
+		t.Fatalf("error loses cause: %v", err)
 	}
 }
 
-func TestBuildAttachesClassificationIncludingInvalid(t *testing.T) {
-	issues := []ghfacts.Issue{
-		issue(1, "workflow:delivery", "type:technical", "rigor:standard"),
-		issue(2, "workflow:delivery", "workflow:operation"),
-	}
-	rels := map[int]ghfacts.Relationships{1: rel(1, nil), 2: rel(2, nil)}
-	snap, err := Build("m1", issues, rels)
+func TestFromMilestoneAttachesClassificationIncludingInvalid(t *testing.T) {
+	client := scopeStubClient(t,
+		[]stubIssue{
+			{number: 1, labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}},
+			{number: 2, labels: []string{"workflow:delivery", "workflow:operation"}},
+		},
+		map[int]stubRel{1: {}, 2: {}}, nil)
+	snap, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1")
 	if err != nil {
-		t.Fatalf("Build: %v", err)
+		t.Fatalf("FromMilestone: %v", err)
 	}
-	if !snap.Items[0].Classification.Valid {
-		t.Fatalf("valid labels classified invalid: %+v", snap.Items[0].Classification)
+	byNumber := map[int]Item{}
+	for _, item := range snap.Items {
+		byNumber[item.Number] = item
 	}
-	got := snap.Items[0].Classification.Classification
-	if got.Workflow != classification.WorkflowDelivery || got.Kind != classification.KindTechnical || got.Rigor != classification.RigorStandard {
-		t.Fatalf("classification = %+v", got)
+	got := byNumber[1].Classification
+	if !got.Valid || got.Classification.Workflow != classification.WorkflowDelivery ||
+		got.Classification.Kind != classification.KindTechnical || got.Classification.Rigor != classification.RigorStandard {
+		t.Fatalf("#1 classification = %+v", got)
 	}
-	if snap.Items[1].Classification.Valid {
-		t.Fatalf("contradictory labels must stay invalid, not be dropped")
-	}
-	if len(snap.Items[1].Classification.Reasons) == 0 {
-		t.Fatalf("invalid classification carries no reasons")
+	if byNumber[2].Classification.Valid || len(byNumber[2].Classification.Reasons) == 0 {
+		t.Fatalf("contradictory labels must stay invalid with reasons, not be dropped")
 	}
 }
 
@@ -136,224 +209,49 @@ func TestUnsatisfiedDependenciesUsesBlockerState(t *testing.T) {
 	}
 }
 
-type stubFacts struct {
-	issues []ghfacts.Issue
-	rels   map[int]ghfacts.Relationships
-	errOn  int // issue number whose relationship fetch fails
-}
-
-func (s stubFacts) ListMilestoneIssues(context.Context, string, int) ([]ghfacts.Issue, error) {
-	return s.issues, nil
-}
-
-func (s stubFacts) Relationships(_ context.Context, _ string, number int) (ghfacts.Relationships, error) {
-	if s.errOn == number {
-		return ghfacts.Relationships{}, fmt.Errorf("injected failure for #%d", number)
-	}
-	return s.rels[number], nil
-}
-
-func TestFromMilestoneFailsClosedWhenAnyRelationshipFetchFails(t *testing.T) {
-	stub := stubFacts{
-		issues: []ghfacts.Issue{issue(1, "workflow:delivery", "type:technical", "rigor:standard"), issue(2)},
-		rels:   map[int]ghfacts.Relationships{1: rel(1, nil), 2: rel(2, nil)},
-		errOn:  2,
-	}
-	_, err := FromMilestone(context.Background(), stub, "o/r", 1, "m1")
-	if err == nil {
-		t.Fatalf("relationship fetch failure must fail the whole snapshot")
-	}
-	if !strings.Contains(err.Error(), "#2") || !strings.Contains(err.Error(), "injected failure") {
-		t.Fatalf("error loses cause: %v", err)
-	}
-}
-
-func TestFromMilestoneBuildsSnapshotFromAllFacts(t *testing.T) {
-	stub := stubFacts{
-		issues: []ghfacts.Issue{
-			issue(1, "workflow:control", "type:milestone-control", "rigor:standard"),
-			issue(5, "workflow:delivery", "type:feature", "rigor:standard"),
-		},
-		rels: map[int]ghfacts.Relationships{1: rel(1, nil), 5: rel(5, ptr(1))},
-	}
-	snap, err := FromMilestone(context.Background(), stub, "o/r", 1, "m1")
-	if err != nil {
-		t.Fatalf("FromMilestone: %v", err)
-	}
-	if snap.Mode != ModeInitiative || snap.ControlIssue != 1 || len(snap.Items) != 2 {
-		t.Fatalf("snapshot = %+v", snap)
-	}
-	if snap.ScopeID != "m1" {
-		t.Fatalf("scope id = %q", snap.ScopeID)
-	}
-}
-
-func TestFromMilestoneFailsClosedOnRelationshipNumberMismatch(t *testing.T) {
-	stub := stubFacts{
-		issues: []ghfacts.Issue{issue(5, "workflow:delivery", "type:technical", "rigor:standard")},
-		rels:   map[int]ghfacts.Relationships{5: rel(6, nil)}, // claims facts about #6
-	}
-	if _, err := FromMilestone(context.Background(), stub, "o/r", 1, "m1"); err == nil {
-		t.Fatalf("relationships for another issue accepted")
-	}
-}
-
-func TestBuildFailsClosedOnDuplicateIssueNumbers(t *testing.T) {
-	dup := issue(5, "workflow:delivery", "type:technical", "rigor:standard")
-	issues := []ghfacts.Issue{dup, dup}
-	rels := map[int]ghfacts.Relationships{5: rel(5, nil)}
-	if _, err := Build("m1", issues, rels); err == nil {
-		t.Fatalf("duplicate issue numbers accepted as two work items")
-	}
-}
-
-// --- Round 4: Build must reject invalid facts from any Facts source ---
-
-func TestBuildFailsClosedOnInvalidFactShapes(t *testing.T) {
-	valid := issue(5, "workflow:delivery", "type:technical", "rigor:standard")
-	cases := []struct {
-		name string
-		rels map[int]ghfacts.Relationships
-	}{
-		{
-			// The zero-number CLOSED blocker (reviewer repro) and its siblings
-			// can no longer even be CONSTRUCTED: constructors reject them.
-			// What reaches Build as a literal is rejected at provenance.
-			name: "reviewer repro zero-number closed blocker",
-			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 0, State: "CLOSED"}}}},
-		},
-		{
-			name: "parent zero",
-			rels: map[int]ghfacts.Relationships{5: {Number: 5, Parent: ptr(0)}},
-		},
-		{
-			name: "blocker state lowercase from graphql source",
-			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "open"}}}},
-		},
-		{
-			name: "duplicate blockers",
-			rels: map[int]ghfacts.Relationships{5: {Number: 5, BlockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}, {Number: 9, State: "OPEN"}}}},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := Build("m1", []ghfacts.Issue{valid}, tc.rels); err == nil {
-				t.Fatalf("invalid relationship facts accepted: %s", tc.name)
-			}
-		})
-	}
-}
-
-func TestBuildFailsClosedOnInvalidIssueFacts(t *testing.T) {
-	bad := ghfacts.Issue{Number: 5, Title: "", State: "open", Labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}}
-	rels := map[int]ghfacts.Relationships{5: rel(5, nil)}
-	if _, err := Build("m1", []ghfacts.Issue{bad}, rels); err == nil {
-		t.Fatalf("invalid issue fact accepted from a replaceable Facts source")
-	}
-}
-
-// --- Round 7: freshness as detectable cross-fact consistency ---
-
-func TestBuildFailsClosedOnCrossFactStateContradictions(t *testing.T) {
+func TestFromMilestoneFailsClosedOnCrossFactStateContradictions(t *testing.T) {
 	t.Run("member state contradicts blocker state", func(t *testing.T) {
-		issues := []ghfacts.Issue{
-			issue(1, "workflow:control", "type:milestone-control", "rigor:standard"),
-			issue(2, "workflow:delivery", "type:technical", "rigor:standard"),
-		}
-		rels := map[int]ghfacts.Relationships{
-			1: rel(1, nil),
-			2: rel(2, nil, ghfacts.BlockedIssue{Number: 1, State: "CLOSED"}),
-		}
-		if _, err := Build("m1", issues, rels); err == nil {
+		client := scopeStubClient(t,
+			[]stubIssue{
+				{number: 1, labels: []string{"workflow:control", "type:milestone-control", "rigor:standard"}},
+				{number: 2, labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}},
+			},
+			map[int]stubRel{
+				1: {},
+				2: {blockedBy: []ghfacts.BlockedIssue{{Number: 1, State: "CLOSED"}}},
+			}, nil)
+		if _, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1"); err == nil {
 			t.Fatalf("member #1 open vs relationship fact #1 CLOSED merged into one snapshot")
 		}
 	})
 	t.Run("two referrers disagree on blocker state", func(t *testing.T) {
-		issues := []ghfacts.Issue{
-			issue(1, "workflow:control", "type:milestone-control", "rigor:standard"),
-			issue(2, "workflow:delivery", "type:technical", "rigor:standard"),
-			issue(3, "workflow:delivery", "type:technical", "rigor:standard"),
-		}
-		rels := map[int]ghfacts.Relationships{
-			1: rel(1, nil),
-			2: rel(2, nil, ghfacts.BlockedIssue{Number: 9, State: "OPEN"}),
-			3: rel(3, nil, ghfacts.BlockedIssue{Number: 9, State: "CLOSED"}),
-		}
-		if _, err := Build("m1", issues, rels); err == nil {
+		client := scopeStubClient(t,
+			[]stubIssue{
+				{number: 1, labels: []string{"workflow:control", "type:milestone-control", "rigor:standard"}},
+				{number: 2, labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}},
+				{number: 3, labels: []string{"workflow:delivery", "type:technical", "rigor:standard"}},
+			},
+			map[int]stubRel{
+				1: {},
+				2: {blockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}}},
+				3: {blockedBy: []ghfacts.BlockedIssue{{Number: 9, State: "CLOSED"}}},
+			}, nil)
+		if _, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1"); err == nil {
 			t.Fatalf("blocker #9 reported OPEN and CLOSED by different facts")
 		}
 	})
 }
 
-// --- Round 8: forged facts must not pass as read facts ---
-
-func TestBuildRejectsForgedZeroValueFacts(t *testing.T) {
-	// Struct literals carry no provenance: without an unforgeable
-	// completeness proof a Facts implementation can fabricate "read the
-	// issue, no labels, no parent, no dependencies".
-	issues := []ghfacts.Issue{{Number: 1, Title: "x", State: "open"}}
-	rels := map[int]ghfacts.Relationships{1: {Number: 1}}
-	if _, err := Build("m1", issues, rels); err == nil {
-		t.Fatalf("forged zero-value facts fabricated a complete flat snapshot")
+// Round 9: fact types are opaque — the only constructible value outside
+// ghfacts is the zero value, and it must be refused.
+func TestZeroValueFactsAreRejected(t *testing.T) {
+	if _, err := Build("m1", []ghfacts.Issue{{}}, map[int]ghfacts.Relationships{1: {}}); err == nil {
+		t.Fatalf("zero-value facts fabricated a snapshot")
 	}
-}
-
-// Round 8: invalid facts cannot even be constructed — the constructors are
-// the unforgeable boundary, Build's re-validation is defense in depth.
-func TestConstructorsRejectInvalidFacts(t *testing.T) {
-	if _, err := ghfacts.NewRelationships(5, nil, []ghfacts.BlockedIssue{{Number: 0, State: "CLOSED"}}); err == nil {
-		t.Fatalf("zero-number blocker constructible")
+	if err := (ghfacts.Issue{}).Validate(); err == nil {
+		t.Fatalf("zero-value Issue validated")
 	}
-	if _, err := ghfacts.NewRelationships(5, ptr(0), nil); err == nil {
-		t.Fatalf("zero parent constructible")
-	}
-	if _, err := ghfacts.NewRelationships(5, nil, []ghfacts.BlockedIssue{{Number: 9, State: "open"}}); err == nil {
-		t.Fatalf("lowercase state constructible")
-	}
-	if _, err := ghfacts.NewRelationships(5, nil,
-		[]ghfacts.BlockedIssue{{Number: 9, State: "OPEN"}, {Number: 9, State: "OPEN"}}); err == nil {
-		t.Fatalf("duplicate blockers constructible")
-	}
-	if _, err := ghfacts.NewIssue(5, "", "open", nil); err == nil {
-		t.Fatalf("empty-title issue constructible")
-	}
-	if _, err := ghfacts.NewIssue(5, "x", "OPEN", nil); err == nil {
-		t.Fatalf("graphql-cased state constructible")
-	}
-	if _, err := ghfacts.NewIssue(5, "x", "open", []string{"", "a"}); err == nil {
-		t.Fatalf("empty label constructible")
-	}
-}
-
-// --- Round 9 SELF-ATTACK: these tests attack MY OWN round-8 mechanisms,
-// not the review's findings. An attacker asks: who can mint the trusted
-// state, and does the stamp bind the content? ---
-
-func TestPublicConstructorIsNotAMint(t *testing.T) {
-	// No GitHub read happened; the public constructors alone must not grant
-	// read authority to a Facts-level caller.
-	issueFact, err := ghfacts.NewIssue(1, "x", "open", []string{"type:milestone-control", "workflow:control", "rigor:standard"})
-	if err != nil {
-		t.Fatalf("construct: %v", err)
-	}
-	relFact, err := ghfacts.NewRelationships(1, nil, nil)
-	if err != nil {
-		t.Fatalf("construct: %v", err)
-	}
-	snap, err := Build("m1", []ghfacts.Issue{issueFact}, map[int]ghfacts.Relationships{1: relFact})
-	if err == nil {
-		t.Fatalf("public constructor minted read authority: snapshot fabricated with zero reads: %+v", snap)
-	}
-}
-
-func TestStampedFactsResistMutation(t *testing.T) {
-	relFact, err := ghfacts.NewRelationships(1, nil, []ghfacts.BlockedIssue{{Number: 2, State: "OPEN"}})
-	if err != nil {
-		t.Fatalf("construct: %v", err)
-	}
-	relFact.BlockedBy = nil // the stamp must not survive content mutation
-	issueFact, _ := ghfacts.NewIssue(1, "x", "open", []string{"workflow:delivery", "type:technical", "rigor:standard"})
-	if _, err := Build("m1", []ghfacts.Issue{issueFact}, map[int]ghfacts.Relationships{1: relFact}); err == nil {
-		t.Fatalf("mutated fact kept its stamp: 'blocked by #2' rewritten to 'no dependencies'")
+	if err := (ghfacts.Relationships{}).Validate(); err == nil {
+		t.Fatalf("zero-value Relationships validated")
 	}
 }

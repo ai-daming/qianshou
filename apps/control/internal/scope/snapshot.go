@@ -3,6 +3,11 @@
 // membership, labels, hierarchy, dependencies, and states; this package only
 // normalizes them and fails closed when facts are missing or contradictory,
 // so an incomplete refresh can never be read as "no dependencies".
+//
+// There is deliberately no Facts interface: arbitrary fact implementations
+// were a forging seam. Snapshots are derived only through *ghfacts.Client,
+// whose decode exits are the sole producers of fact values (opaque,
+// immutable, unconstructible from outside that package).
 package scope
 
 import (
@@ -77,42 +82,32 @@ type Snapshot struct {
 	Items        []Item
 }
 
-// Facts is the GitHub fact source a snapshot is derived from. *ghfacts.Client
-// implements it; tests inject stubs.
-type Facts interface {
-	ListMilestoneIssues(ctx context.Context, slug string, milestone int) ([]ghfacts.Issue, error)
-	Relationships(ctx context.Context, slug string, number int) (ghfacts.Relationships, error)
-}
-
-// Build derives a snapshot from an already fetched fact set. Every issue must
-// carry relationship facts; a missing entry fails closed instead of reading
-// as "no dependencies". More than one Control Issue label fails closed as
-// inconsistent GitHub governance.
+// Build derives a snapshot from an already fetched fact set. Every member
+// must carry relationship facts, every fact must pass the unified invariants
+// (opaque facts can only come from a real read), and more than one Control
+// Issue label fails closed as inconsistent GitHub governance.
 func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relationships) (*Snapshot, error) {
 	snap := &Snapshot{ScopeID: scopeID, Mode: ModeFlat}
 	var controlIssues []int
 	seen := make(map[int]bool, len(issues))
 	issueStates := make(map[int]string, len(issues))
 	for _, src := range issues {
-		if seen[src.Number] {
-			return nil, fmt.Errorf("事实异常：#%d 在成员列表中重复出现", src.Number)
+		if seen[src.Number()] {
+			return nil, fmt.Errorf("事实异常：#%d 在成员列表中重复出现", src.Number())
 		}
-		seen[src.Number] = true
-		r, ok := rels[src.Number]
+		seen[src.Number()] = true
+		r, ok := rels[src.Number()]
 		if !ok {
-			return nil, fmt.Errorf("依赖事实不完整：#%d 缺少父级/Blocked by 事实，缺失不得解释为无依赖", src.Number)
+			return nil, fmt.Errorf("依赖事实不完整：#%d 缺少父级/Blocked by 事实，缺失不得解释为无依赖", src.Number())
 		}
-		if r.Number != src.Number {
-			return nil, fmt.Errorf("事实错位：请求 #%d 的关系却得到 #%d 的（不得拼装成同一事实）", src.Number, r.Number)
+		if r.Number() != src.Number() {
+			return nil, fmt.Errorf("事实错位：请求 #%d 的关系却得到 #%d 的（不得拼装成同一事实）", src.Number(), r.Number())
 		}
-		// Facts is a replaceable interface: the unified ghfacts invariants are
-		// enforced here too, so no fact source can hand Build a collapsed,
-		// contradictory, or self-referential fact set.
 		if err := src.Validate(); err != nil {
-			return nil, fmt.Errorf("成员事实无效（#%d）：%w", src.Number, err)
+			return nil, fmt.Errorf("成员事实无效（#%d）：%w", src.Number(), err)
 		}
 		if err := r.Validate(); err != nil {
-			return nil, fmt.Errorf("关系事实无效（#%d）：%w", src.Number, err)
+			return nil, fmt.Errorf("关系事实无效（#%d）：%w", src.Number(), err)
 		}
 		// Freshness as detectable consistency: the same issue may appear as a
 		// member and as a blocker elsewhere (and be reported by several
@@ -128,23 +123,26 @@ func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relation
 			issueStates[number] = normalized
 			return nil
 		}
-		if err := recordState(src.Number, src.State); err != nil {
+		if err := recordState(src.Number(), src.State()); err != nil {
 			return nil, err
 		}
-		for _, ref := range r.BlockedBy {
+		blockedBy := r.BlockedBy()
+		for _, ref := range blockedBy {
 			if err := recordState(ref.Number, ref.State); err != nil {
 				return nil, err
 			}
 		}
 		item := Item{
-			Number:         src.Number,
-			Title:          src.Title,
-			State:          src.State,
-			Labels:         src.Labels,
-			Classification: classification.Normalize(src.Labels),
-			Parent:         r.Parent,
+			Number:         src.Number(),
+			Title:          src.Title(),
+			State:          src.State(),
+			Labels:         src.Labels(),
+			Classification: classification.Normalize(src.Labels()),
 		}
-		for _, b := range r.BlockedBy {
+		if parent, ok := r.Parent(); ok {
+			item.Parent = &parent
+		}
+		for _, b := range blockedBy {
 			item.BlockedBy = append(item.BlockedBy, BlockedRef(b))
 		}
 		if item.IsControlIssue() {
@@ -169,24 +167,24 @@ func Build(scopeID string, issues []ghfacts.Issue, rels map[int]ghfacts.Relation
 	return snap, nil
 }
 
-// FromMilestone fetches all facts for a milestone scope and derives the
-// snapshot. Any failure — membership listing or one issue's relationships —
-// discards the whole result.
-func FromMilestone(ctx context.Context, facts Facts, slug string, milestone int, scopeID string) (*Snapshot, error) {
-	issues, err := facts.ListMilestoneIssues(ctx, slug, milestone)
+// FromMilestone fetches all facts for a milestone scope through the real
+// client and derives the snapshot. Any failure — membership listing or one
+// issue's relationships — discards the whole result.
+func FromMilestone(ctx context.Context, client *ghfacts.Client, slug string, milestone int, scopeID string) (*Snapshot, error) {
+	issues, err := client.ListMilestoneIssues(ctx, slug, milestone)
 	if err != nil {
 		return nil, fmt.Errorf("读取里程碑 %s milestone %d 成员失败：%w", slug, milestone, err)
 	}
 	rels := make(map[int]ghfacts.Relationships, len(issues))
 	for _, src := range issues {
-		r, err := facts.Relationships(ctx, slug, src.Number)
+		r, err := client.Relationships(ctx, slug, src.Number())
 		if err != nil {
-			return nil, fmt.Errorf("读取 #%d 的父级/依赖关系失败（部分事实不得降级为无依赖）：%w", src.Number, err)
+			return nil, fmt.Errorf("读取 #%d 的父级/依赖关系失败（部分事实不得降级为无依赖）：%w", src.Number(), err)
 		}
-		if r.Number != src.Number {
-			return nil, fmt.Errorf("读取 #%d 的关系却返回 #%d 的（不得拼装成同一事实）", src.Number, r.Number)
+		if r.Number() != src.Number() {
+			return nil, fmt.Errorf("读取 #%d 的关系却返回 #%d 的（不得拼装成同一事实）", src.Number(), r.Number())
 		}
-		rels[src.Number] = r
+		rels[src.Number()] = r
 	}
 	return Build(scopeID, issues, rels)
 }
@@ -194,36 +192,23 @@ func FromMilestone(ctx context.Context, facts Facts, slug string, milestone int,
 // FromScope derives the snapshot for one configured scope. Source forms the
 // data model has settled are served; issue-tree traversal is an open decision
 // and fails closed rather than guessing.
-func FromScope(ctx context.Context, facts Facts, project config.Project, sc config.Scope) (*Snapshot, error) {
+func FromScope(ctx context.Context, client *ghfacts.Client, project config.Project, sc config.Scope) (*Snapshot, error) {
 	switch sc.Source.Type {
 	case "milestone":
-		return FromMilestone(ctx, facts, project.Repository.Slug, sc.Source.Number, sc.ID)
+		return FromMilestone(ctx, client, project.Repository.Slug, sc.Source.Number, sc.ID)
 	case "issue":
-		return fromSingleIssue(ctx, facts, project.Repository.Slug, sc.Source.Number, sc.ID)
+		src, err := client.GetIssue(ctx, project.Repository.Slug, sc.Source.Number)
+		if err != nil {
+			return nil, fmt.Errorf("读取 %s#%d 失败：%w", project.Repository.Slug, sc.Source.Number, err)
+		}
+		r, err := client.Relationships(ctx, project.Repository.Slug, sc.Source.Number)
+		if err != nil {
+			return nil, fmt.Errorf("读取 #%d 的父级/依赖关系失败：%w", sc.Source.Number, err)
+		}
+		return Build(sc.ID, []ghfacts.Issue{src}, map[int]ghfacts.Relationships{src.Number(): r})
 	case "issue-tree":
 		return nil, fmt.Errorf("issue-tree 遍历语义仍是开放决策（docs/architecture/data-model-and-qianshou-home.md），本切片不猜测")
 	default:
 		return nil, fmt.Errorf("未支持的 source.type：%q", sc.Source.Type)
 	}
-}
-
-func fromSingleIssue(ctx context.Context, facts Facts, slug string, number int, scopeID string) (*Snapshot, error) {
-	single, ok := facts.(SingleIssueFacts)
-	if !ok {
-		return nil, fmt.Errorf("事实源不支持读取单个 Issue（%s#%d）", slug, number)
-	}
-	src, err := single.GetIssue(ctx, slug, number)
-	if err != nil {
-		return nil, fmt.Errorf("读取 %s#%d 失败：%w", slug, number, err)
-	}
-	r, err := facts.Relationships(ctx, slug, number)
-	if err != nil {
-		return nil, fmt.Errorf("读取 #%d 的父级/依赖关系失败：%w", number, err)
-	}
-	return Build(scopeID, []ghfacts.Issue{src}, map[int]ghfacts.Relationships{number: r})
-}
-
-// SingleIssueFacts is the optional fact source extension for issue scopes.
-type SingleIssueFacts interface {
-	GetIssue(ctx context.Context, slug string, number int) (ghfacts.Issue, error)
 }

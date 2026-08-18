@@ -85,11 +85,11 @@ func TestListMilestoneIssuesPaginatesAndFiltersPullRequests(t *testing.T) {
 	if len(issues) != 101 {
 		t.Fatalf("issues = %d, want 101 (100 page one minus 1 PR, plus 2 page two)", len(issues))
 	}
-	if issues[0].Number != 1 || issues[100].Number != 102 {
-		t.Fatalf("ordering broken: first=%d last=%d", issues[0].Number, issues[100].Number)
+	if issues[0].Number() != 1 || issues[100].Number() != 102 {
+		t.Fatalf("ordering broken: first=%d last=%d", issues[0].Number(), issues[100].Number())
 	}
-	if len(issues[99].Labels) != 1 || issues[99].Labels[0] != "workflow:delivery" {
-		t.Fatalf("labels not extracted: %+v", issues[99].Labels)
+	if labels := issues[99].Labels(); len(labels) != 1 || labels[0] != "workflow:delivery" {
+		t.Fatalf("labels not extracted: %+v", labels)
 	}
 }
 
@@ -182,12 +182,12 @@ func TestRelationshipsParsesParentAndBlockedBy(t *testing.T) {
 	if !sawAuth {
 		t.Fatalf("GraphQL call missing auth header")
 	}
-	if rel.Parent == nil || *rel.Parent != 1 {
-		t.Fatalf("parent = %v, want 1", rel.Parent)
+	if parent, ok := rel.Parent(); !ok || parent != 1 {
+		t.Fatalf("parent = (%d, %v), want (1, true)", parent, ok)
 	}
-	if len(rel.BlockedBy) != 2 || rel.BlockedBy[0].Number != 29 || rel.BlockedBy[0].State != "OPEN" ||
-		rel.BlockedBy[1].Number != 3 || rel.BlockedBy[1].State != "CLOSED" {
-		t.Fatalf("blockedBy not parsed: %+v", rel.BlockedBy)
+	if blocked := rel.BlockedBy(); len(blocked) != 2 || blocked[0].Number != 29 || blocked[0].State != "OPEN" ||
+		blocked[1].Number != 3 || blocked[1].State != "CLOSED" {
+		t.Fatalf("blockedBy not parsed: %+v", blocked)
 	}
 }
 
@@ -200,7 +200,7 @@ func TestRelationshipsHandlesNoParentNoDeps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Relationships: %v", err)
 	}
-	if rel.Parent != nil || len(rel.BlockedBy) != 0 {
+	if _, hasParent := rel.Parent(); hasParent || len(rel.BlockedBy()) != 0 {
 		t.Fatalf("expected empty relationships: %+v", rel)
 	}
 }
@@ -300,11 +300,10 @@ func TestRelationshipsPaginatesBlockedByBeyondFirstPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Relationships: %v", err)
 	}
-	if len(rel.BlockedBy) != 102 {
-		t.Fatalf("blockedBy = %d items, want 102（first:100 不允许静默截断）", len(rel.BlockedBy))
-	}
-	if rel.BlockedBy[101].Number != 102 || rel.BlockedBy[101].State != "CLOSED" {
-		t.Fatalf("second page not merged in order: %+v", rel.BlockedBy[101])
+	if blocked := rel.BlockedBy(); len(blocked) != 102 {
+		t.Fatalf("blockedBy = %d items, want 102（first:100 不允许静默截断）", len(blocked))
+	} else if blocked[101].Number != 102 || blocked[101].State != "CLOSED" {
+		t.Fatalf("second page not merged in order: %+v", blocked[101])
 	}
 	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "CURSOR-1" {
 		t.Fatalf("pagination cursors wrong: %v", cursors)
@@ -386,7 +385,7 @@ func TestRelationshipsAcceptsExplicitNullParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit null parent is legal: %v", err)
 	}
-	if rel.Parent != nil || len(rel.BlockedBy) != 0 {
+	if _, hasParent := rel.Parent(); hasParent || len(rel.BlockedBy()) != 0 {
 		t.Fatalf("unexpected facts: %+v", rel)
 	}
 }
@@ -1067,7 +1066,7 @@ func TestLinkQuotedPairInTitleParam(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		requests++
 		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
-			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; title="a\\"b"; rel="next"`, r.Host, r.URL.Path))
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; title="a\"b"; rel="next"`, r.Host, r.URL.Path))
 			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
 			return
 		}
@@ -1088,7 +1087,7 @@ func TestLinkQuotedPairInRelValue(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		requests++
 		if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
-			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="ne\\xt"`, r.Host, r.URL.Path))
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; rel="ne\xt"`, r.Host, r.URL.Path))
 			fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
 			return
 		}

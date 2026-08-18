@@ -50,30 +50,34 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// Issue is one GitHub issue observed through a milestone.
+// Issue is one GitHub issue observed through a milestone. The type is
+// opaque and immutable: fields are unexported, nothing outside this package
+// can construct or mutate a fact, and there is deliberately no public
+// constructor — the only producers are the real decode exits of Client. A
+// zero value fails Validate. Getters return defensive copies so no caller
+// can alias-mutate fact content.
 type Issue struct {
-	Number int
-	Title  string
-	State  string
-	Labels []string
-
-	// read is the provenance bit: only this package's decoding (or the
-	// validating constructor) sets it. A struct literal from any consumer —
-	// including a Facts implementation — leaves it false, so Validate refuses
-	// values that were never actually read. Value shape cannot prove
-	// completeness; provenance can.
-	read bool
+	number int
+	title  string
+	state  string
+	labels []string
+	read   bool
 }
 
-// NewIssue is the only way for a consumer to construct a valid Issue from
-// raw values. It validates and stamps provenance in one step, so an invalid
-// or forged fact cannot exist.
-func NewIssue(number int, title, state string, labels []string) (Issue, error) {
-	issue := Issue{Number: number, Title: title, State: state, Labels: labels, read: true}
-	if err := issue.Validate(); err != nil {
-		return Issue{}, err
-	}
-	return issue, nil
+// Number returns the issue number.
+func (i Issue) Number() int { return i.number }
+
+// Title returns the issue title.
+func (i Issue) Title() string { return i.title }
+
+// State returns the REST-cased issue state (open/closed).
+func (i Issue) State() string { return i.state }
+
+// Labels returns a defensive copy of the issue labels.
+func (i Issue) Labels() []string {
+	out := make([]string, len(i.labels))
+	copy(out, i.labels)
+	return out
 }
 
 // BlockedIssue is one native Blocked by prerequisite with its current state.
@@ -84,25 +88,29 @@ type BlockedIssue struct {
 
 // Relationships carries the native hierarchy and dependency edges of one
 // issue. Parent and BlockedBy come from GraphQL; both are GitHub-owned.
+// Opaque and immutable like Issue: no public constructor exists, only the
+// Client decode exits produce values, fields cannot be reached or mutated
+// from outside, and getters return copies.
 type Relationships struct {
-	Number    int
-	Parent    *int
-	BlockedBy []BlockedIssue
-
-	// read is the provenance bit (see Issue.read): a zero-value
-	// Relationships must not be distinguishable-from-nothing AND
-	// acceptable-as-evidence at the same time.
-	read bool
+	number    int
+	parent    int
+	hasParent bool
+	blockedBy []BlockedIssue
+	read      bool
 }
 
-// NewRelationships is the only way for a consumer to construct valid
-// relationship facts from raw values; it validates and stamps provenance.
-func NewRelationships(number int, parent *int, blockedBy []BlockedIssue) (Relationships, error) {
-	rel := Relationships{Number: number, Parent: parent, BlockedBy: blockedBy, read: true}
-	if err := rel.Validate(); err != nil {
-		return Relationships{}, err
-	}
-	return rel, nil
+// Number returns the issue the facts belong to.
+func (r Relationships) Number() int { return r.number }
+
+// Parent returns the parent issue number and whether an explicit parent was
+// observed (absence of a parent is itself a proven fact here, not a gap).
+func (r Relationships) Parent() (number int, present bool) { return r.parent, r.hasParent }
+
+// BlockedBy returns a defensive copy of the observed prerequisites.
+func (r Relationships) BlockedBy() []BlockedIssue {
+	out := make([]BlockedIssue, len(r.blockedBy))
+	copy(out, r.blockedBy)
+	return out
 }
 
 // Validate is the unified fact invariant for one observed issue. Every decode
@@ -111,24 +119,24 @@ func NewRelationships(number int, parent *int, blockedBy []BlockedIssue) (Relati
 // contradictory, or self-referential fact set.
 func (i Issue) Validate() error {
 	if !i.read {
-		return fmt.Errorf("Issue #%d 无读取凭证：结构体字面量不构成事实（provenance 不可伪造）", i.Number)
+		return fmt.Errorf("Issue #%d 无读取凭证：只有 ghfacts 解码出口能产生事实（provenance 不可铸造）", i.number)
 	}
-	if i.Number <= 0 {
+	if i.number <= 0 {
 		return fmt.Errorf("issue 缺少 number（不得折叠为零值）")
 	}
-	if i.Title == "" {
-		return fmt.Errorf("#%d 缺少 title（没拿到不能解释为标题为空）", i.Number)
+	if i.title == "" {
+		return fmt.Errorf("#%d 缺少 title（没拿到不能解释为标题为空）", i.number)
 	}
-	if i.State != "open" && i.State != "closed" {
-		return fmt.Errorf("#%d 的 state %q 不是已知的 REST 枚举（open/closed）", i.Number, i.State)
+	if i.state != "open" && i.state != "closed" {
+		return fmt.Errorf("#%d 的 state %q 不是已知的 REST 枚举（open/closed）", i.number, i.state)
 	}
-	seen := make(map[string]bool, len(i.Labels))
-	for _, name := range i.Labels {
+	seen := make(map[string]bool, len(i.labels))
+	for _, name := range i.labels {
 		if name == "" {
-			return fmt.Errorf("#%d 存在空标签名", i.Number)
+			return fmt.Errorf("#%d 存在空标签名", i.number)
 		}
 		if seen[name] {
-			return fmt.Errorf("#%d 的标签 %q 重复出现，同一事实出现两次即矛盾", i.Number, name)
+			return fmt.Errorf("#%d 的标签 %q 重复出现，同一事实出现两次即矛盾", i.number, name)
 		}
 		seen[name] = true
 	}
@@ -142,32 +150,32 @@ func (i Issue) Validate() error {
 // satisfied dependency.
 func (r Relationships) Validate() error {
 	if !r.read {
-		return fmt.Errorf("关系事实 #%d 无读取凭证：结构体字面量不构成事实（provenance 不可伪造）", r.Number)
+		return fmt.Errorf("关系事实 #%d 无读取凭证：只有 ghfacts 解码出口能产生事实（provenance 不可铸造）", r.number)
 	}
-	if r.Number <= 0 {
+	if r.number <= 0 {
 		return fmt.Errorf("关系事实缺少所属 Issue 编号")
 	}
-	if r.Parent != nil {
-		if *r.Parent <= 0 {
-			return fmt.Errorf("#%d 的 parent 编号非正数", r.Number)
+	if r.hasParent {
+		if r.parent <= 0 {
+			return fmt.Errorf("#%d 的 parent 编号非正数", r.number)
 		}
-		if *r.Parent == r.Number {
-			return fmt.Errorf("#%d 是自己的 parent，事实矛盾", r.Number)
+		if r.parent == r.number {
+			return fmt.Errorf("#%d 是自己的 parent，事实矛盾", r.number)
 		}
 	}
-	seen := make(map[int]bool, len(r.BlockedBy))
-	for _, b := range r.BlockedBy {
+	seen := make(map[int]bool, len(r.blockedBy))
+	for _, b := range r.blockedBy {
 		if b.Number <= 0 {
-			return fmt.Errorf("#%d 的依赖缺少 number（零值依赖会伪装成已满足）", r.Number)
+			return fmt.Errorf("#%d 的依赖缺少 number（零值依赖会伪装成已满足）", r.number)
 		}
-		if b.Number == r.Number {
-			return fmt.Errorf("#%d 依赖自己，事实矛盾", r.Number)
+		if b.Number == r.number {
+			return fmt.Errorf("#%d 依赖自己，事实矛盾", r.number)
 		}
 		if b.State != "OPEN" && b.State != "CLOSED" {
-			return fmt.Errorf("#%d 的依赖 #%d state %q 不是已知的 GraphQL 枚举（OPEN/CLOSED）", r.Number, b.Number, b.State)
+			return fmt.Errorf("#%d 的依赖 #%d state %q 不是已知的 GraphQL 枚举（OPEN/CLOSED）", r.number, b.Number, b.State)
 		}
 		if seen[b.Number] {
-			return fmt.Errorf("#%d 的依赖 #%d 重复出现，同一事实出现两次即矛盾", r.Number, b.Number)
+			return fmt.Errorf("#%d 的依赖 #%d 重复出现，同一事实出现两次即矛盾", r.number, b.Number)
 		}
 		seen[b.Number] = true
 	}
@@ -201,6 +209,17 @@ type Client struct {
 // immediately: reads without credentials must not be attempted.
 func New(token string) (*Client, error) {
 	return newClient(token, defaultRestBase, defaultGqlURL, http.DefaultClient)
+}
+
+// NewWithBase returns a client against explicit REST and GraphQL endpoints.
+// Endpoints change where requests go, never what counts as a fact: the full
+// decode validation chain (identity echo, canonical repository_url, strict
+// scan) applies unchanged, so this grants no minting authority.
+func NewWithBase(token, restBase, gqlURL string, hc *http.Client) (*Client, error) {
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	return newClient(token, restBase, gqlURL, hc)
 }
 
 func newClient(token, restBase, gqlURL string, hc *http.Client) (*Client, error) {
@@ -295,7 +314,7 @@ func (item restIssue) toIssue() Issue {
 	for _, l := range *item.Labels {
 		labels = append(labels, l.Name)
 	}
-	return Issue{Number: item.Number, Title: *item.Title, State: item.State, Labels: labels, read: true}
+	return Issue{number: item.Number, title: *item.Title, state: item.State, labels: labels, read: true}
 }
 
 // ListMilestoneIssues returns every issue currently in one GitHub milestone
@@ -417,7 +436,7 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 		return Relationships{}, fmt.Errorf("仓库定位必须是 owner/repo，当前为 %q", slug)
 	}
 	parts := strings.SplitN(slug, "/", 2)
-	rel := Relationships{Number: number}
+	rel := Relationships{number: number}
 	after := ""
 	// Every page describes the same issue: parent must agree across pages and
 	// a blocker may appear at most once. Contradictory pages fail as a whole
@@ -463,9 +482,12 @@ func (c *Client) Relationships(ctx context.Context, slug string, number int) (Re
 			}
 			seenBlockers[b.Number] = b.State
 		}
-		rel.BlockedBy = append(rel.BlockedBy, facts.nodes...)
+		rel.blockedBy = append(rel.blockedBy, facts.nodes...)
 		if !facts.hasNext {
-			rel.Parent = parentValue
+			if parentValue != nil {
+				rel.parent = *parentValue
+				rel.hasParent = true
+			}
 			rel.read = true
 			if err := rel.Validate(); err != nil {
 				return Relationships{}, &Error{
@@ -898,6 +920,134 @@ func restIssueSchema(path string) (map[string]bool, bool) {
 	return nil, false
 }
 
+// parsedLink is one RFC 8288 link-value: its target and the relation types
+// of its FIRST rel parameter (repeated parameters keep the first occurrence,
+// §3.3).
+type parsedLink struct {
+	target string
+	rels   []string
+}
+
+// parseLinkHeader is the single owner of the Link grammar (RFC 8288
+// link-values over RFC 9110 quoted-strings). Comma splitting, semicolon
+// splitting, quote state, quoted-pair unescaping, and the required-rel rule
+// all live in this one state machine — no second implementation of any part
+// of the grammar exists in this package. Anything the grammar cannot fully
+// explain is an error, never a silent "no next page".
+func parseLinkHeader(values []string) ([]parsedLink, error) {
+	var links []parsedLink
+	for _, header := range values {
+		if strings.TrimSpace(header) == "" {
+			continue
+		}
+		i, n := 0, len(header)
+		skipOWS := func() {
+			for i < n && (header[i] == ' ' || header[i] == '\t') {
+				i++
+			}
+		}
+		for {
+			skipOWS()
+			if i >= n {
+				break
+			}
+			if header[i] != '<' {
+				return nil, fmt.Errorf("Link 值缺少 <> 目标：%q", snippetAt(header, i))
+			}
+			end := strings.IndexByte(header[i:], '>')
+			if end < 0 {
+				return nil, fmt.Errorf("Link 值的 <> 未闭合：%q", snippetAt(header, i))
+			}
+			link := parsedLink{target: header[i+1 : i+end]}
+			i += end + 1
+			sawRel := false
+		params:
+			for {
+				skipOWS()
+				if i >= n {
+					break
+				}
+				switch header[i] {
+				case ',':
+					i++
+					break params
+				case ';':
+					i++
+					skipOWS()
+				default:
+					return nil, fmt.Errorf("Link 语法不可解释：%q", snippetAt(header, i))
+				}
+				nameStart := i
+				for i < n && header[i] != '=' && header[i] != ';' && header[i] != ',' &&
+					header[i] != ' ' && header[i] != '\t' {
+					i++
+				}
+				name := strings.ToLower(header[nameStart:i])
+				skipOWS()
+				if i >= n || header[i] != '=' {
+					return nil, fmt.Errorf("Link 参数缺少 =：%q", snippetAt(header, nameStart))
+				}
+				i++
+				skipOWS()
+				var value string
+				if i < n && header[i] == '"' {
+					var b strings.Builder
+					i++
+					closed := false
+					for i < n {
+						c := header[i]
+						if c == '\\' {
+							if i+1 >= n {
+								return nil, fmt.Errorf("quoted-pair 悬空：%q", snippetAt(header, i))
+							}
+							b.WriteByte(header[i+1])
+							i += 2
+							continue
+						}
+						if c == '"' {
+							closed = true
+							i++
+							break
+						}
+						b.WriteByte(c)
+						i++
+					}
+					if !closed {
+						return nil, fmt.Errorf("Link 参数引号未闭合：%q", snippetAt(header, nameStart))
+					}
+					value = b.String()
+				} else {
+					vs := i
+					for i < n && header[i] != ',' && header[i] != ';' && header[i] != ' ' && header[i] != '\t' {
+						i++
+					}
+					value = header[vs:i]
+				}
+				if name == "rel" && !sawRel {
+					sawRel = true
+					link.rels = strings.Fields(value)
+				}
+			}
+			if len(link.rels) == 0 {
+				return nil, fmt.Errorf("link-value 缺少 RFC 8288 §3.3 必选的 rel 参数：%q", link.target)
+			}
+			links = append(links, link)
+		}
+	}
+	return links, nil
+}
+
+func snippetAt(s string, i int) string {
+	if i >= len(s) {
+		return s
+	}
+	end := i + 40
+	if end > len(s) {
+		end = len(s)
+	}
+	return s[i:end]
+}
+
 // boundNextLink derives the next listing page from every Link header value
 // and the canonical current-page URL. Obligations:
 //   - channel: the next page must share the current page's origin — the
@@ -906,50 +1056,33 @@ func restIssueSchema(path string) (map[string]bool, bool) {
 //     per_page) must be exactly the requested ones, and only the page number
 //     may change, strictly monotonically — a same-origin link to another
 //     repository or milestone is still facts about something else;
-//   - ambiguity: all header values are considered; more than one rel=next,
-//     or an uninterpretable link-value, fails instead of silently picking
-//     one or reading it as "no next page".
+//   - ambiguity: the header grammar is parsed by its single owner; more than
+//     one rel=next fails instead of silently picking one.
 //
-// Relation types follow RFC 8288: rel values are whitespace-separated lists
-// inside a quoted string, and a link carrying "next" anywhere in its
-// relation list is a next link. The returned URL is rebuilt from the
-// canonical parameters; nothing the server sent is replayed verbatim.
+// The returned URL is rebuilt from the canonical parameters; nothing the
+// server sent is replayed verbatim.
 func boundNextLink(linkValues []string, current *url.URL) (string, error) {
+	links, err := parseLinkHeader(linkValues)
+	if err != nil {
+		return "", err
+	}
 	nextRaw := ""
-	sawLink := false
-	for _, value := range linkValues {
-		if strings.TrimSpace(value) == "" {
+	for _, link := range links {
+		isNext := false
+		for _, rel := range link.rels {
+			if strings.EqualFold(rel, "next") {
+				isNext = true
+			}
+		}
+		if !isNext {
 			continue
 		}
-		if err := validateQuoteClosure(value); err != nil {
-			return "", err
+		if nextRaw != "" {
+			return "", fmt.Errorf("存在多个 rel=next 的下一页（%s 与 %s）：分页信号歧义，不得任选其一", nextRaw, link.target)
 		}
-		for _, segment := range splitOutsideQuotes(value, ',') {
-			segment = strings.TrimSpace(segment)
-			if segment == "" {
-				continue
-			}
-			target, rels, err := parseLinkValue(segment)
-			if err != nil {
-				return "", err
-			}
-			sawLink = true
-			isNext := false
-			for _, rel := range rels {
-				if strings.EqualFold(rel, "next") {
-					isNext = true
-				}
-			}
-			if !isNext {
-				continue
-			}
-			if nextRaw != "" {
-				return "", fmt.Errorf("存在多个 rel=next 的下一页（%s 与 %s）：分页信号歧义，不得任选其一", nextRaw, target)
-			}
-			nextRaw = target
-		}
+		nextRaw = link.target
 	}
-	if !sawLink || nextRaw == "" {
+	if nextRaw == "" {
 		return "", nil
 	}
 	next, err := url.Parse(nextRaw)
@@ -987,90 +1120,6 @@ func boundNextLink(linkValues []string, current *url.URL) (string, error) {
 	rq.Set("page", strconv.Itoa(page))
 	rebuilt.RawQuery = rq.Encode()
 	return rebuilt.String(), nil
-}
-
-// splitOutsideQuotes splits on sep unless inside a double-quoted string, so
-// quoted values containing the separator survive (RFC 8288 allows them).
-func splitOutsideQuotes(s string, sep byte) []string {
-	var parts []string
-	start, quoted := 0, false
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '"':
-			quoted = !quoted
-		case sep:
-			if !quoted {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
-}
-
-// parseLinkValue parses one RFC 8288 link-value ("<target>; k=v; …").
-// Uninterpretable content is an error, never "no next page".
-func parseLinkValue(segment string) (target string, rels []string, err error) {
-	rest := strings.TrimSpace(segment)
-	if !strings.HasPrefix(rest, "<") {
-		return "", nil, fmt.Errorf("Link 值缺少 <> 目标：%q", segment)
-	}
-	end := strings.Index(rest, ">")
-	if end < 0 {
-		return "", nil, fmt.Errorf("Link 值的 <> 未闭合：%q", segment)
-	}
-	target = rest[1:end]
-	rest = rest[end+1:]
-	sawRel := false
-	for _, param := range splitOutsideQuotes(rest, ';') {
-		param = strings.TrimSpace(param)
-		if param == "" {
-			continue
-		}
-		eq := strings.Index(param, "=")
-		if eq < 0 {
-			return "", nil, fmt.Errorf("Link 参数不可解析：%q（不得静默忽略分页信号）", param)
-		}
-		key := strings.TrimSpace(param[:eq])
-		val := strings.TrimSpace(param[eq+1:])
-		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
-			val = val[1 : len(val)-1]
-		}
-		// RFC 8288 §3.3: a parameter must not occur more than once in a
-		// link-value; the first occurrence wins and later ones are ignored —
-		// never the other way round, which would let a trailing rel erase a
-		// parsed next.
-		if strings.EqualFold(key, "rel") {
-			if sawRel {
-				continue
-			}
-			sawRel = true
-			rels = strings.Fields(val)
-		}
-	}
-	return target, rels, nil
-}
-
-// validateQuoteClosure rejects a header value whose quoted strings never
-// close. Without this, an unterminated quote silently swallows every
-// parameter after it and the missing pagination signal reads as termination.
-func validateQuoteClosure(value string) error {
-	quoted, escaped := false, false
-	for _, r := range value {
-		switch {
-		case escaped:
-			escaped = false
-		case quoted && r == '\\':
-			escaped = true
-		case r == '"':
-			quoted = !quoted
-		}
-	}
-	if quoted {
-		return fmt.Errorf("Link 头存在未闭合引号：%q（语法不完整不得解释为没有下一页）", value)
-	}
-	return nil
 }
 
 func derefInt(p *int) int {
