@@ -16,8 +16,10 @@ Before changing Qianshou architecture or workflow semantics, read:
 
 ## Fail-closed repair discipline
 
-A Review finding is a symptom, not a work order. When fixing any validation
-or fail-closed defect:
+A Review finding is a symptom, not a work order. The fixer converges while
+the reviewer falsifies, so a self-check that only confirms the fix tests a
+sample while review tests the population — adopt the falsifier's questions
+below as your own. When fixing any validation or fail-closed defect:
 
 1. Name the invariant the finding violates and the conjunct responsible;
    find where that conjunct is (or should be) enforced.
@@ -38,7 +40,9 @@ or fail-closed defect:
 5. Matrix entries are claims: every "enforced by / absorbed by" must cite a
    test that fails when the claim is false; entries without such a test must
    be marked UNVERIFIED. An unverified entry is worse than an empty cell
-   because it closes inquiry.
+   because it closes inquiry. Where a machine-readable obligations manifest
+   exists (as for ghfacts), CI must verify that every ENFORCED citation
+   exists and runs — claims are not tracked by discipline alone.
 6. A cell is not an atom. Classify every obligation inside it — expanded by
    operation × primitive — as exactly one of ENFORCED (with test), N/A (with
    reason and the counterexample condition that would make it applicable),
@@ -52,9 +56,26 @@ or fail-closed defect:
 8. Ask the forger question for every exported fact type: can a consumer
    construct a value that satisfies validation without having been read?
    Completeness is provenance, not value shape — it must be carried by the
-   type (unforgeable validated constructors), and deliberate weakenings made
-   for convenience must be registered as weakenings, never written in
+   type (opaque immutable facts, no public mint), and deliberate weakenings
+   made for convenience must be registered as weakenings, never written in
    obligatory language.
+9. Attack your own fix before pushing it. For every new enforcement
+   mechanism, write and run tests that abuse the mechanism itself, using the
+   attacker's questions: who can mint the trusted state it relies on? is the
+   trusted state bound to immutable content? does any hand-written parsing
+   cover the full grammar of its standard? Attack tests ship in the same
+   change as the fix. A fix verified only by the finding's repro verifies a
+   sample, not the class.
+10. One grammar, one owner. Never implement a documented grammar (RFC, wire
+    protocol, file format) from memory or in pieces: read the standard's
+    grammar section before writing code, and keep exactly one parser for the
+    whole grammar. Multiple partial state machines for the same syntax
+    diverge on the first legal input one of them mishandles, and the
+    divergence is invisible to tests that only feed familiar shapes.
+11. Quote external evidence by reading it back. Run IDs, commit SHAs, URLs,
+    and issue numbers are copied from a fresh query of the source, never
+    transcribed from truncated or reformatted output. Evidence is what the
+    source says, not what you remember it said.
 
 See `apps/control/internal/ghfacts/README.md` for the matrix this package
 is governed by.
