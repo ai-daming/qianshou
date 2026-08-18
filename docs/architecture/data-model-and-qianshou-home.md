@@ -9,9 +9,9 @@ This document defines Qianshou's core data entities, their ownership boundaries,
 
 The central rule is:
 
-> Configuration locates projects and delivery scopes. GitHub, Git, test commands, and the Qianshou ledger remain the owners of their respective facts.
+> Configuration locates Projects. A Scope is selected at runtime and refreshed from GitHub; GitHub, Git, test commands, and the Qianshou ledger remain the owners of their respective facts.
 
-This is a target architecture and data contract. It must not be read as evidence that the current V0 storage and runtime have already been migrated.
+This is the working architecture and data contract. Each section states the current implementation boundary where later ledger or delivery capabilities are still absent.
 
 ## Qianshou Home
 
@@ -30,7 +30,7 @@ The default may be overridden with `QIANSHOU_HOME` for tests, isolated profiles,
 
 | Path | Responsibility | Authoritative? |
 |---|---|---|
-| `config.json` | Engines, Projects, Scopes, Landing strategies, and local bindings | Yes, for local configuration only |
+| `config.json` | Engines, Projects, repository locators, and main-checkout bindings | Yes, for local configuration only |
 | `qianshou.db` | Conversations, development briefs, DeliveryBaselines, DeliveryTrack lifecycles, Review rounds, workspace bindings, and events | Yes, for Qianshou's local ledger only |
 | `cache/` | Rebuildable GitHub and Git snapshots | No |
 | `runs/` | Raw and normalized Codex / Claude Code execution records | Evidence artifact, not business truth |
@@ -39,8 +39,8 @@ The default may be overridden with `QIANSHOU_HOME` for tests, isolated profiles,
 Recommended permissions:
 
 ```text
-~/.qianshou/                 0700
-ledger, run, and log files   0600
+~/.qianshou/                         0700
+config, ledger, run, and log files   0600
 ```
 
 GitHub, Codex, and Claude Code credentials remain owned by their respective CLIs. Qianshou configuration must not copy tokens or login material.
@@ -52,7 +52,7 @@ There is one central Qianshou configuration on each machine. Managed repositorie
 Reasons:
 
 - Qianshou must know which Projects exist before opening one of them.
-- Absolute paths and local worktree bindings differ by machine and do not belong in a shared product repository.
+- Absolute main-checkout paths differ by machine and do not belong in a shared product repository.
 - A repository may contain several delivery Scopes, such as M7, M8, and a standalone hotfix Issue.
 - Requiring every repository to opt into Qianshou would couple product source code to one operator tool.
 
@@ -145,15 +145,14 @@ The repository slug and local path are locators. Qianshou must verify that the c
 
 ### Scope
 
-A Scope is the delivery boundary currently managed by Qianshou. Milestone is one Scope form, not a prerequisite for using Qianshou.
+A Scope is the runtime selection through which the user views or works with current GitHub Issues. It is not a row in `config.json`. Milestone is one Scope form, not a prerequisite for using Qianshou.
 
-Supported Scope forms:
+V1 read APIs support:
 
 | Type | Remote selector | Work Items |
 |---|---|---|
 | `milestone` | GitHub Milestone number | Issues currently in that Milestone |
 | `issue` | GitHub Issue number | Exactly that Issue |
-| `issue-tree` | Root GitHub Issue number | Root Issue plus its native Sub-issues |
 
 Examples:
 
@@ -165,21 +164,18 @@ Examples:
 { "type": "issue", "number": 231 }
 ```
 
-```json
-{ "type": "issue-tree", "rootIssueNumber": 151 }
-```
-
-Scope stores only the remote selector. It does not copy Milestone titles, Issue lists, Issue titles, labels, Parent/Sub-issue relationships, dependencies, or open/closed state.
+The selector exists in the current request or interaction. It does not copy Milestone titles, Issue lists, Issue titles, labels, Parent/Sub-issue relationships, dependencies, or open/closed state. `issue-tree` remains a possible later selector; it is not part of the V1 API.
 
 ### Work Item
 
 A Work Item is one GitHub Issue observed through a Scope.
 
+Its stable identity is `projectId + issueNumber`. Opening the same Issue through another Scope or after it moves between Milestones must not create another delivery history.
+
 Work Items are derived from GitHub on refresh. They are not declared in `config.json`.
 
 - A `milestone` Scope derives its Work Items from current Milestone membership.
 - An `issue` Scope derives one Work Item.
-- An `issue-tree` Scope derives the root and its current native Sub-issues.
 
 If a Work Item leaves a Scope, Qianshou retains its local ledger history for audit but does not continue displaying it as current Scope work.
 
@@ -207,7 +203,7 @@ A standalone Issue may target the base branch directly:
 }
 ```
 
-Landing describes intended topology. Git still owns whether branches, worktrees, SHAs, ancestry, and dirtiness actually exist.
+Landing describes intended topology. It is selected when delivery is prepared and recorded with delivery evidence, not registered under a Project in `config.json`. Git still owns whether branches, worktrees, SHAs, ancestry, and dirtiness actually exist.
 
 ### Workspace
 
@@ -240,7 +236,7 @@ Outputs may become explicit inputs to later Conversations through adopted develo
 
 ## Configuration shape
 
-The target `~/.qianshou/config.json` shape is:
+The V1 `~/.qianshou/config.json` shape is:
 
 ```json
 {
@@ -266,43 +262,20 @@ The target `~/.qianshou/config.json` shape is:
       },
       "local": {
         "path": "/Users/<user>/work/mamamate/mamamate"
-      },
-      "scopes": [
-        {
-          "id": "m7",
-          "source": {
-            "type": "milestone",
-            "number": 7
-          },
-          "landing": {
-            "type": "integration-branch",
-            "baseBranch": "main",
-            "branch": "codex/milestone-7-poster-engine-baseline",
-            "worktree": "/Users/<user>/work/mamamate/mamamate.worktrees/mamamate/milestone-7-poster-engine-baseline"
-          }
-        },
-        {
-          "id": "issue-231",
-          "source": {
-            "type": "issue",
-            "number": 231
-          },
-          "landing": {
-            "type": "base-branch",
-            "baseBranch": "main"
-          }
-        }
-      ]
+      }
     }
   ]
 }
 ```
 
+The parser is strict. Unknown fields, including the earlier development-draft `scopes` and `landing` fields, are errors rather than a compatibility path. Project IDs and repository slugs are unique; each absolute local path must be the main checkout of the configured GitHub repository.
+
 ## Fact ownership
 
 | Data | Owner |
 |---|---|
-| Repository and Scope selectors, local paths, Landing intent, enabled Engines | `~/.qianshou/config.json` |
+| Repository locators, main-checkout paths, enabled Engines | `~/.qianshou/config.json` |
+| Current Scope selector | Current API request or user interaction |
 | Milestone title/state/membership | GitHub |
 | Issue title/body/state/labels and Parent/Sub-issue | GitHub |
 | Blocked by/Blocking and PR/CI state | GitHub |
@@ -322,36 +295,26 @@ macOS:   /Users/<user>/.qianshou/
 Ubuntu:  /home/<user>/.qianshou/
 ```
 
-The GitHub repository and Scope selectors may be logically identical across machines, but the whole directory must not be synchronized blindly. A future portable-project catalog and machine-specific binding split may be introduced only when cross-machine operation is required.
+The GitHub repository locators may be logically identical across machines, but the whole directory must not be synchronized blindly. A future portable-project catalog and machine-specific binding split may be introduced only when cross-machine operation is required.
 
 ## Invariants
 
 - Engine and Role are separate entities.
 - Project means repository; M7 and M8 are Scopes under the Mamamate Project, not separate Projects.
 - Milestone is optional; a standalone Issue is a valid Scope.
-- Scope and Landing strategy are independent.
+- Scope and Landing strategy are independent; neither is Project configuration.
 - Work Items come from GitHub, never from a local Issue list.
 - Issue worktrees come from Git and ledger bindings, never from static configuration.
 - Configuration never copies GitHub titles, membership, labels, dependencies, or states.
 - Local ledger assertions never override GitHub, Git, test, or business facts.
 
-## Current implementation gap
+## Current implementation boundary
 
-As of 2026-08-14, V0 still:
-
-- reads `config/projects.json` from the Qianshou source repository;
-- stores ledger state in the source repository's ignored `.qianshou/state.json`;
-- models each configured entry as one Milestone target rather than `Project → Scope`;
-- supports only Milestone discovery;
-- stores Developer/Reviewer default-engine bindings instead of a clean Engine registry and per-Conversation selection model;
-- assumes an integration-branch Landing strategy.
-
-Migrating to this contract is separate implementation work. The migration must preserve current ledger history, validate repository/local-path identity, and keep the existing manual-control safety boundaries.
+The Go V1 read path loads Engines and Projects from `~/.qianshou/config.json`, validates repository/main-checkout identity, and reads Milestone or single-Issue Scopes from GitHub on every request. It does not yet implement the SQLite ledger, DeliveryTrack, Workspace, Landing, or write APIs. The frozen TypeScript prototype still contains older development-draft configuration shapes; those shapes are not V1 compatibility contracts.
 
 ## Open decisions
 
-- Exact `issue-tree` traversal and whether the root itself is an implementation Work Item.
+- Whether and how `issue-tree` becomes a later runtime Scope selector.
 - Whether engine commands are built-in adapters, user-configurable commands, or both.
 - Final ledger schema and migration from JSON to `qianshou.db`.
 - Whether cross-machine operation warrants a portable catalog plus machine-local bindings.
-- Refresh-policy placement and whether it is global, Project-level, or Scope-level.

@@ -6,14 +6,16 @@
   "description": "A local-first AI software delivery control plane.",
   "scripts": {
     "dev": "pnpm --filter @qianshou/core build && pnpm -r --parallel dev",
-    "build": "pnpm --filter @qianshou/core build && pnpm --filter @qianshou/web build && pnpm --filter @qianshou/server build",
+    "build": "pnpm --filter @qianshou/api-client build && pnpm --filter @qianshou/core build && pnpm --filter @qianshou/web build && pnpm --filter @qianshou/server build",
     "start": "pnpm --filter @qianshou/server start",
+    "api:generate": "pnpm --filter @qianshou/api-client generate",
+    "api:check": "node scripts/check-api-client.mjs",
     "test": "pnpm -r test",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
     "typecheck": "pnpm -r typecheck",
-    "check": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm api:check && pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",

@@ -2,7 +2,7 @@
 
 Qianshou is a local-first AI software delivery control plane. It keeps GitHub, Git, worktree, conversation, development brief, PR Review, and human handoff state visible, and can run explicitly selected Claude Code or Codex sessions without introducing a remote workflow runtime.
 
-The first configured project is Mamamate Milestone 7. Qianshou binds only to `127.0.0.1`; GitHub credentials remain inside the local `gh` process and are never sent to the browser.
+One `qianshou serve` process can read several configured GitHub repositories. Milestone and Issue Scopes are selected at runtime and refreshed from GitHub. Qianshou binds only to loopback; GitHub credentials remain inside the process and are never sent to the browser.
 
 ## Workspace
 
@@ -11,6 +11,7 @@ apps/control       Go control-plane binary: `qianshou serve` / `qianshou run` (A
 apps/server        TypeScript prototype, frozen as the executable spec
 apps/web           Web console (React scaffold from M1-03)
 packages/core      Shared TypeScript contracts (transitional)
+packages/api-client Generated TypeScript client for the Go API
 protocol/          OpenAPI contract, the single API truth source
 .agents/skills     Repository-level Agent role skills
 ```
@@ -27,34 +28,23 @@ Current repository skills include `gh-issue`, the governed GitHub Issue operator
 
 Prerequisites: Node.js >= 22, pnpm 10, Go >= 1.26, and an authenticated `gh` for real project data.
 
-```bash
-pnpm install
-cp config/projects.example.json config/projects.json  # fill in your repo slug and local paths
-pnpm dev
-```
-
-`config/projects.json` is machine-local and ignored by Git.
-
-Open <http://127.0.0.1:41728>. The Vite dev server proxies `/api` to the local API on port `41727`.
-
-For the built application:
-
-```bash
-pnpm build
-pnpm start
-```
-
-Then open <http://127.0.0.1:41727>.
+Install repository dependencies with `pnpm install`. The TypeScript server under `apps/server` is a frozen prototype, not the API V1 implementation.
 
 ## Go control binary
 
 ```bash
+install -d -m 700 ~/.qianshou
+install -m 600 config/config.example.json ~/.qianshou/config.json
+# Edit repository slugs and absolute main-checkout paths.
+
 cd apps/control
 go test ./...
 go build -o qianshou ./cmd/qianshou
-./qianshou serve   # central control server (skeleton; see ADR 0001)
+./qianshou serve   # http://127.0.0.1:41727
 ./qianshou run     # runner process (functional from M2-02)
 ```
+
+The read-only V1 endpoints list configured Projects, refresh a Project's GitHub Milestones, refresh the Issues currently in a Milestone, and read one Issue directly. Project responses omit local paths and Engine commands. Scope, Milestone membership, Issue facts, dependencies, Landing, and Workspace are not stored in configuration.
 
 ## Verify
 
@@ -62,8 +52,8 @@ go build -o qianshou ./cmd/qianshou
 pnpm check
 ```
 
-`check` runs format check, typecheck, tests, and build. CI runs the same suite plus `go vet`/`go test`/`go build` on every push and pull request.
+`check` regenerates the TypeScript API client and rejects drift, then runs format check, typecheck, tests, and build. CI runs the same contract gate plus `go vet`/`go test`/`go build` on every push and pull request.
 
-Runtime handoff state is stored under `.qianshou/` and intentionally ignored by Git. `config/projects.json` contains only repository/Milestone selectors, local paths and runtime preferences. GitHub remains the sole source for the Milestone title, Issue membership, Issue roles, Issue state, and native Parent/Sub-issue and Blocked by/Blocking relationships.
+Machine-local configuration lives at `~/.qianshou/config.json`. GitHub remains the sole source for Milestone titles and membership, Issue titles, labels and state, and native Parent/Sub-issue and Blocked by/Blocking relationships.
 
 Every conversation chooses Claude Code or Codex when it is created. That engine is immutable; switching engines requires a new conversation. Qianshou can attach an adopted development brief, DeliveryBaseline, or handoff package to the new conversation, but never transfers opaque vendor session state.

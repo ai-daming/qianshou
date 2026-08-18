@@ -29,6 +29,12 @@
   },
   "overrides": [
     {
+      "includes": ["packages/api-client/src/generated/**"],
+      "linter": {
+        "enabled": false
+      }
+    },
+    {
       "includes": ["**/*.test.ts"],
       "linter": {
         "rules": {

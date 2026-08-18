@@ -1,24 +1,289 @@
 openapi: 3.1.0
 info:
   title: Qianshou Control Plane API
-  version: 0.1.0
-  description: >-
-    Single contract source for the Qianshou control plane (ADR 0001). The
-    Go server implements this contract and the web client is generated
-    from it. This seed declares the shape only; freezing the full v1
-    surface from the TypeScript prototype API is M1-02/M1-03 work.
+  version: 1.0.0
+  description: Local, read-only Project and dynamic Scope facts served by qianshou.
 servers:
   - url: http://127.0.0.1:41727
     description: Local control server
 paths:
-  /api/status:
+  /healthz:
     get:
-      operationId: getStatus
-      summary: Current control-plane status
+      operationId: getHealth
+      summary: Check the local server process
       responses:
         "200":
-          description: Status payload
+          description: Server is healthy
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      summary: List configured Projects without machine-private fields
+      responses:
+        "200":
+          description: Configured Projects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectsResponse"
+  /api/v1/projects/{projectId}/milestones:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectMilestones
+      summary: Read the Project's current GitHub Milestones
+      responses:
+        "200":
+          description: Current Milestones
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MilestonesResponse"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/milestones/{milestoneNumber}/issues:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/MilestoneNumber"
+    get:
+      operationId: listMilestoneIssues
+      summary: Refresh the current Issues in one GitHub Milestone
+      responses:
+        "200":
+          description: Current Milestone Issues and dependency judgments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MilestoneIssuesResponse"
+        "400":
+          $ref: "#/components/responses/InvalidNumber"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+    get:
+      operationId: getProjectIssue
+      summary: Refresh one GitHub Issue directly
+      responses:
+        "200":
+          description: Current Issue and dependency judgment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueResponse"
+        "400":
+          $ref: "#/components/responses/InvalidNumber"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+components:
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    MilestoneNumber:
+      name: milestoneNumber
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    IssueNumber:
+      name: issueNumber
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    InvalidNumber:
+      description: A path number is invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ProjectNotFound:
+      description: The Project is not configured
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    GitHubFactsUnavailable:
+      description: Current GitHub facts could not be read completely
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    RepositoryLocator:
+      type: object
+      additionalProperties: false
+      required: [provider, slug]
+      properties:
+        provider:
+          type: string
+          enum: [github]
+        slug:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, repository]
+      properties:
+        id:
+          type: string
+        repository:
+          $ref: "#/components/schemas/RepositoryLocator"
+    ProjectsResponse:
+      type: object
+      additionalProperties: false
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+    Milestone:
+      type: object
+      additionalProperties: false
+      required: [number, title, state]
+      properties:
+        number:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/OpenClosedState"
+    MilestonesResponse:
+      type: object
+      additionalProperties: false
+      required: [projectId, milestones]
+      properties:
+        projectId:
+          type: string
+        milestones:
+          type: array
+          items:
+            $ref: "#/components/schemas/Milestone"
+    Issue:
+      type: object
+      additionalProperties: false
+      required: [number, title, state, labels, dependency]
+      properties:
+        number:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/OpenClosedState"
+        labels:
+          type: array
+          items:
+            type: string
+        dependency:
+          $ref: "#/components/schemas/DependencyJudgment"
+    MilestoneIssuesResponse:
+      type: object
+      additionalProperties: false
+      required: [projectId, milestoneNumber, issues]
+      properties:
+        projectId:
+          type: string
+        milestoneNumber:
+          type: integer
+          minimum: 1
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/Issue"
+    IssueResponse:
+      type: object
+      additionalProperties: false
+      required: [projectId, issue]
+      properties:
+        projectId:
+          type: string
+        issue:
+          $ref: "#/components/schemas/Issue"
+    OpenClosedState:
+      type: string
+      enum: [OPEN, CLOSED]
+    DependencyJudgment:
+      oneOf:
+        - $ref: "#/components/schemas/DependencyReady"
+        - $ref: "#/components/schemas/DependencyBlocked"
+        - $ref: "#/components/schemas/DependencyError"
+    DependencyReady:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [READY]
+    DependencyBlocked:
+      type: object
+      additionalProperties: false
+      required: [status, blockedBy]
+      properties:
+        status:
+          type: string
+          enum: [BLOCKED]
+        blockedBy:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+    DependencyError:
+      type: object
+      additionalProperties: false
+      required: [status, error]
+      properties:
+        status:
+          type: string
+          enum: [ERROR]
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
