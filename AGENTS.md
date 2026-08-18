@@ -41,8 +41,11 @@ below as your own. When fixing any validation or fail-closed defect:
    test that fails when the claim is false; entries without such a test must
    be marked UNVERIFIED. An unverified entry is worse than an empty cell
    because it closes inquiry. Where a machine-readable obligations manifest
-   exists (as for ghfacts), CI must verify that every ENFORCED citation
-   exists and runs — claims are not tracked by discipline alone.
+   exists (as for ghfacts), CI must verify the manifest schema, resolve
+   every citation in its named package, agree with the prose in both
+   directions, and force every test to be classified — claims are not
+   tracked by discipline alone, and the checker itself carries tamper
+   tests.
 6. A cell is not an atom. Classify every obligation inside it — expanded by
    operation × primitive — as exactly one of ENFORCED (with test), N/A (with
    reason and the counterexample condition that would make it applicable),
@@ -76,6 +79,14 @@ below as your own. When fixing any validation or fail-closed defect:
     and issue numbers are copied from a fresh query of the source, never
     transcribed from truncated or reformatted output. Evidence is what the
     source says, not what you remember it said.
+12. A comment is not evidence. A safety claim attached to a mechanism
+    ("this grants no authority", "this never redirects") is either backed
+    by an attack test in the same change or deleted — across rounds, such
+    claims were the first casualty every time. Mechanisms ship by
+    adversarial strength, not by functional completeness: a checker needs
+    tamper tests against itself, a parser needs the standard's full
+    alphabet transcribed from the text, and a new public API needs its
+    mint-surface answered before push.
 
 See `apps/control/internal/ghfacts/README.md` for the matrix this package
 is governed by.
