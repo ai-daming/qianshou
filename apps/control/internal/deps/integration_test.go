@@ -23,23 +23,45 @@ func TestQianshouM1RealJudgments(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// #30 被 #29 阻塞（#29 未关闭）
+	// 断言用关系不变量而非易变的在线真值：
+	// BlockedBy 恰为 Blockers 中状态 OPEN 的那些；已知成员关系稳定。
+	assertInvariant := func(t *testing.T, j Judgment) {
+		t.Helper()
+		open := map[int]bool{}
+		for _, b := range j.Blockers {
+			if b.State == "OPEN" {
+				open[b.Number] = true
+			}
+		}
+		if len(j.BlockedBy) != len(open) {
+			t.Fatalf("BlockedBy %v 与 OPEN 阻塞者 %v 不一致", j.BlockedBy, open)
+		}
+		for _, n := range j.BlockedBy {
+			if !open[n] {
+				t.Fatalf("#%d 在 BlockedBy 里但不是 OPEN", n)
+			}
+		}
+	}
 	j, err := Judge(ctx, token, "ai-daming/qianshou", 30)
 	if err != nil {
 		t.Fatalf("判断 #30：%v", err)
 	}
-	if len(j.BlockedBy) != 1 || j.BlockedBy[0] != 29 {
-		t.Fatalf("#30 判定 BlockedBy = %v，want [29]", j.BlockedBy)
+	assertInvariant(t, j)
+	has29 := false
+	for _, b := range j.Blockers {
+		if b.Number == 29 {
+			has29 = true
+		}
+	}
+	if !has29 {
+		t.Fatalf("#30 的阻塞者里没有 #29：%+v", j.Blockers)
 	}
 
-	// #4 的阻塞者 #3、#2 均已关闭 → 可开工
 	j4, err := Judge(ctx, token, "ai-daming/qianshou", 4)
 	if err != nil {
 		t.Fatalf("判断 #4：%v", err)
 	}
-	if len(j4.BlockedBy) != 0 {
-		t.Fatalf("#4 判定 BlockedBy = %v，want 空", j4.BlockedBy)
-	}
+	assertInvariant(t, j4)
 }
 
 func TestMamamateM7RealJudgment(t *testing.T) {

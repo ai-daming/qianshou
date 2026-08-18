@@ -1,10 +1,13 @@
 package deps
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -101,4 +104,86 @@ func TestCanStartRejectsBadInput(t *testing.T) {
 		t.Fatalf("issue 0 accepted")
 	}
 	_ = strings.TrimSpace
+}
+
+// --- 审查攻击用例（先红后修）---
+
+func TestInnerPresenceFailsClosed(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"pageInfo missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"nodes":[]}}}}}`},
+		{"pageInfo null", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":null,"nodes":[]}}}}}`},
+		{"hasNextPage missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{},"nodes":[]}}}}}`},
+		{"hasNextPage null", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}`},
+		{"nodes missing", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{"hasNextPage":false}}}}}}`},
+		{"nodes null", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":null}}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url, hc := stubClient(t, 200, tc.body)
+			if _, err := CanStart(context.Background(), "tok", url, "ai-daming/qianshou", 30, hc); err == nil {
+				t.Fatalf("缺失的响应被折叠成确定判断")
+			}
+		})
+	}
+}
+
+func TestDuplicateConclusionKeysFailClosed(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"open blocker erased by later empty nodes", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":29,"state":"OPEN"}],"nodes":[]}}}}}`},
+		{"hasNextPage true overridden by false", `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{"hasNextPage":true,"hasNextPage":false},"nodes":[]}}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url, hc := stubClient(t, 200, tc.body)
+			if _, err := CanStart(context.Background(), "tok", url, "ai-daming/qianshou", 30, hc); err == nil {
+				t.Fatalf("矛盾的重复键被 last-wins 择一")
+			}
+		})
+	}
+}
+
+func TestOverLimitBodyFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,
+			"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`))
+		w.Write(bytes.Repeat([]byte(" "), 1<<20+1))
+	}))
+	defer srv.Close()
+	if _, err := CanStart(context.Background(), "tok", srv.URL, "ai-daming/qianshou", 30, srv.Client()); err == nil {
+		t.Fatalf("被截断的超限响应被当成完整事实")
+	}
+}
+
+func TestResolveTokenPinsPublicGitHubHost(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	script := filepath.Join(dir, "gh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" > \"$ARGS_FILE\"\nprintf tok\n"), 0o755); err != nil {
+		t.Fatalf("write fake gh: %v", err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_HOST", "ghe.example.com") // 企业默认主机也不得把企业 token 发给公共 GitHub
+	token, err := ResolveToken(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveToken: %v", err)
+	}
+	if token != "tok" {
+		t.Fatalf("token = %q", token)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "--hostname github.com") {
+		t.Fatalf("gh auth token 未显式绑定 github.com：%s", string(args))
+	}
 }

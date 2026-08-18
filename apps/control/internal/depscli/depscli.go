@@ -1,4 +1,5 @@
 // Package depscli 实现 qianshou can-start：判断一个 Issue 现在能不能开工。
+// 退出码：0 = 可开工，1 = 被阻塞，2 = 判断失败。
 package depscli
 
 import (
@@ -6,32 +7,33 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/ai-daming/qianshou/apps/control/internal/deps"
 )
 
-// Run 执行 `qianshou can-start <issue> [-R owner/repo]`。
-func Run(args []string) error {
+// Run 执行 `qianshou can-start -R owner/repo <issue>`，返回是否被阻塞。
+func Run(args []string) (blocked bool, err error) {
 	flags := flag.NewFlagSet("can-start", flag.ContinueOnError)
-	repo := flags.String("R", "ai-daming/qianshou", "仓库（owner/repo）")
+	repo := flags.String("R", "ai-daming/qianshou", "仓库（owner/repo），须写在 issue 号之前")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return false, err
 	}
 	rest := flags.Args()
 	if len(rest) != 1 {
-		return fmt.Errorf("用法：qianshou can-start <issue 号> [-R owner/repo]")
+		return false, fmt.Errorf("用法：qianshou can-start -R owner/repo <issue 号>")
 	}
-	var issue int
-	if _, err := fmt.Sscanf(rest[0], "%d", &issue); err != nil || issue <= 0 {
-		return fmt.Errorf("Issue 编号必须是正整数，当前为 %q", rest[0])
+	issue, err := strconv.Atoi(rest[0])
+	if err != nil || issue <= 0 {
+		return false, fmt.Errorf("Issue 编号必须是正整数，当前为 %q", rest[0])
 	}
 	token, err := deps.ResolveToken(context.Background())
 	if err != nil {
-		return err
+		return false, err
 	}
 	j, err := deps.Judge(context.Background(), token, *repo, issue)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(j.BlockedBy) == 0 {
 		fmt.Printf("可以开工：%s#%d 没有未关闭的阻塞", *repo, issue)
@@ -39,20 +41,24 @@ func Run(args []string) error {
 			fmt.Printf("（%d 个阻塞者均已关闭）", len(j.Blockers))
 		}
 		fmt.Println()
-		return nil
+		return false, nil
 	}
 	fmt.Printf("不能开工：%s#%d 仍被阻塞：", *repo, issue)
 	for _, n := range j.BlockedBy {
 		fmt.Printf(" #%d(未关闭)", n)
 	}
 	fmt.Println()
-	return nil
+	return true, nil
 }
 
 // Main 供 cmd 入口使用。
 func Main() {
-	if err := Run(os.Args[2:]); err != nil {
+	blocked, err := Run(os.Args[2:])
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "can-start:", err)
+		os.Exit(2)
+	}
+	if blocked {
 		os.Exit(1)
 	}
 }
