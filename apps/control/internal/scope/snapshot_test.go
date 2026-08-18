@@ -255,3 +255,18 @@ func TestZeroValueFactsAreRejected(t *testing.T) {
 		t.Fatalf("zero-value Relationships validated")
 	}
 }
+
+// --- Round 10 SELF-ATTACK: the production endpoint-override constructor
+// must not turn a self-controlled server into a GitHub fact source. ---
+
+func TestSelfControlledEndpointIsNotAGitHubFactSource(t *testing.T) {
+	// A self-controlled server self-reports every binding field
+	// (repository_url, nameWithOwner); when they all come from the same
+	// attacker they prove nothing about origin.
+	client := scopeStubClient(t,
+		[]stubIssue{{number: 1, labels: []string{"workflow:control", "type:milestone-control", "rigor:standard"}}},
+		map[int]stubRel{1: {}}, nil)
+	if _, err := FromMilestone(context.Background(), client, "ai-daming/qianshou", 1, "m1"); err == nil {
+		t.Fatalf("production API let a self-controlled endpoint mint an initiative snapshot with zero GitHub reads")
+	}
+}

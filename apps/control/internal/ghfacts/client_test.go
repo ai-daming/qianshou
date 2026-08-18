@@ -1112,3 +1112,32 @@ func TestLinkMissingRequiredRelFailsClosed(t *testing.T) {
 		t.Fatalf("link-value without the required rel parameter read as normal termination (RFC 8288 §3.3)")
 	}
 }
+
+// --- Round 10 SELF-ATTACK: owning a grammar means owning its alphabet. ---
+
+func TestLinkGrammarRejectsMalformedABNF(t *testing.T) {
+	cases := []struct {
+		name string
+		link string
+	}{
+		{name: "quote inside unquoted token value", link: `rel=ne"xt`},
+		{name: "invalid relation-type in quoted value", link: `rel="next,"`},
+		{name: "illegal parameter name character", link: `bad@name=x; rel="next"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Query().Get("page") == "" || r.URL.Query().Get("page") == "1" {
+					w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?milestone=1&state=all&per_page=100&page=2>; %s`, r.Host, r.URL.Path, tc.link))
+					fmt.Fprint(w, milestonePage(issueItem(1, "workflow:delivery")))
+					return
+				}
+				fmt.Fprint(w, milestonePage(issueItem(2, "workflow:delivery")))
+			}, nil)
+			if _, err := c.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+				t.Fatalf("malformed grammar accepted: %s", tc.name)
+			}
+		})
+	}
+}
