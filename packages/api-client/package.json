@@ -1,0 +1,16 @@
+{
+  "name": "@qianshou/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/generated/index.ts",
+  "scripts": {
+    "generate": "openapi-ts -i ../../protocol/openapi.yaml -o src/generated && biome format --write src/generated",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0"
+  }
+}

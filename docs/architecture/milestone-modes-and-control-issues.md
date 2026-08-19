@@ -61,7 +61,7 @@ For two Issues `A` and `B`, when `B` cannot begin until `A` has delivered its re
 
 Parent/Sub-issue answers “which initiative owns this work?” Dependency answers “what must finish before this work may proceed?” An Issue may be a Sub-issue of the Control Issue and still have no dependency on its sibling Issues.
 
-The native GitHub relationship is the only dependency fact. Qianshou takes the Issue membership returned by the selected GitHub Milestone, then collects those Issues' native `blockedBy` relationships through GitHub GraphQL and uses the returned Issue states to calculate local action gates. `config/projects.json` must not contain Issue lists, roles, titles, or dependency edges; those fields are invalid configuration because they would create a second, drifting source of truth. If dependency collection is incomplete or fails, Qianshou fails the external refresh instead of treating the Issue as unblocked.
+The native GitHub relationship is the only dependency fact. Qianshou takes the Issue membership returned by the selected GitHub Milestone, then collects those Issues' native `blockedBy` relationships through GitHub GraphQL and uses the returned Issue states to calculate local action gates. `~/.qianshou/config.json` must not contain Milestone selectors, Issue lists, roles, titles, or dependency edges; those fields are invalid configuration because they would create a second, drifting source of truth. If dependency collection is incomplete or fails, Qianshou fails the external refresh instead of treating the Issue as unblocked.
 
 ## Control Issue responsibility
 

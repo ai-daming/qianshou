@@ -18,7 +18,7 @@ External facts remain authoritative:
 - Git owns worktree paths, branches, ancestry, dirtiness, and commit identity.
 - Test commands own pass/fail evidence.
 
-The local Qianshou ledger owns only workflow assertions and collaboration artifacts: DeliveryTrack lifecycle, immutable-engine conversations, Agent turns, adopted development briefs, DeliveryBaselines, Issue workspace bindings, Review rounds, notes, and event history. Configuration identifies Projects, Scope selectors, Landing intent, enabled Engines, and machine-local bindings; it must not declare GitHub titles, membership, roles, relationships, or states. The UI must display external and local state separately when they disagree.
+The local Qianshou ledger owns only workflow assertions and collaboration artifacts: DeliveryTrack lifecycle, immutable-engine conversations, Agent turns, adopted development briefs, DeliveryBaselines, Issue workspace bindings, Review rounds, notes, and event history. Configuration identifies Projects, enabled Engines, repository locators, and machine-local main checkouts. Scope is selected at runtime; Landing is delivery intent, not Project configuration. Neither may declare GitHub titles, membership, roles, relationships, or states. The UI must display external and local state separately when they disagree.
 
 ## Conversation invariant
 
@@ -58,6 +58,6 @@ A Stop Condition is an explicit side state in the Discussion Hub. It pauses lega
 
 ## Local execution boundary
 
-Qianshou may run `git worktree add -b` from the configured Milestone integration branch and start a Claude Code or Codex process only after an explicit user click. Worktree discovery and creation use Git directly; no external worktree registry or manager participates. Discussion and Review run read-only/plan profiles; implementation and repair run workspace-write/edit profiles. CLI arguments are passed without a shell and prompts are written through stdin.
+Qianshou may run `git worktree add -b` from an explicitly adopted Landing target and start a Claude Code or Codex process only after an explicit user click. Worktree discovery and creation use Git directly; no external worktree registry or manager participates. Discussion and Review run read-only/plan profiles; implementation and repair run workspace-write/edit profiles. CLI arguments are passed without a shell and prompts are written through stdin.
 
 Qianshou does not merge branches, push commits, publish releases, deploy services, or perform production writes without a separate explicit authorization. An Agent completion message never proves that Coding or Review completed: Qianshou must refresh the PR, Git head, checks, tests, and recorded Review evidence before enabling the next action.

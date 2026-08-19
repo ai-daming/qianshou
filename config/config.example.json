@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "engines": [
+    {
+      "id": "codex",
+      "adapter": "codex-cli",
+      "command": "codex"
+    },
+    {
+      "id": "claude-code",
+      "adapter": "claude-code-cli",
+      "command": "claude"
+    }
+  ],
+  "projects": [
+    {
+      "id": "qianshou",
+      "repository": {
+        "provider": "github",
+        "slug": "ai-daming/qianshou"
+      },
+      "local": {
+        "path": "/absolute/path/to/qianshou-main-checkout"
+      }
+    }
+  ]
+}
