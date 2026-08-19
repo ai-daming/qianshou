@@ -70,6 +70,76 @@ func TestGitHubFactsDeadlineReturnsExistingStructuredError(t *testing.T) {
 	}
 }
 
+func TestGitHubFactsBodyReadDeadlineUsesDeadlineMessage(t *testing.T) {
+	const issuesPath = "/repos/ai-daming/qianshou/issues"
+	cases := []struct {
+		name        string
+		path        string
+		stalledPath string
+	}{
+		{
+			name:        "REST response body",
+			path:        "/api/v1/projects/qianshou/milestones",
+			stalledPath: "/repos/ai-daming/qianshou/milestones",
+		},
+		{
+			name:        "GraphQL dependency response body",
+			path:        "/api/v1/projects/qianshou/milestones/1/issues",
+			stalledPath: "/graphql",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == tc.stalledPath:
+					w.WriteHeader(http.StatusOK)
+					flusher, ok := w.(http.Flusher)
+					if !ok {
+						t.Error("test server response does not support flushing")
+						return
+					}
+					flusher.Flush()
+					<-r.Context().Done()
+				case tc.stalledPath == "/graphql" && r.URL.Path == issuesPath:
+					err := json.NewEncoder(w).Encode([]map[string]any{{
+						"repository_url": "http://" + r.Host + "/repos/ai-daming/qianshou",
+						"number":         36,
+						"title":          "Issue",
+						"state":          "open",
+						"labels":         []any{},
+						"milestone":      map[string]any{"number": 1},
+					}})
+					if err != nil {
+						t.Errorf("write Issue response: %v", err)
+					}
+				default:
+					t.Errorf("unexpected upstream request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			httpClient := *srv.Client()
+			httpClient.Timeout = 50 * time.Millisecond
+			facts := githubapi.NewClient("test-token", srv.URL, srv.URL+"/graphql", &httpClient)
+			h := handlerWithFactsTimeout(testConfig(), facts, 5*time.Second)
+
+			started := time.Now()
+			rr := getJSON(t, h, tc.path, nil)
+			if elapsed := time.Since(started); elapsed >= 2*time.Second {
+				t.Fatalf("response took %s; the child request deadline did not fire first", elapsed)
+			}
+			if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), `"code":"GITHUB_FACTS_UNAVAILABLE"`) {
+				t.Fatalf("GET %s = %d %s", tc.path, rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), `"message":"Current GitHub facts could not be read completely before the request deadline."`) {
+				t.Fatalf("GET %s mislabeled a body-read deadline: %s", tc.path, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	ts := httptest.NewServer(handler(config.Config{}, &fakeFacts{}))
 	defer ts.Close()

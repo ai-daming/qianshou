@@ -367,7 +367,7 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]byte, []string, er
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, responseBodyLimit+1))
 	if err != nil {
-		return nil, nil, fmt.Errorf("GitHub response could not be read")
+		return nil, nil, fmt.Errorf("GitHub response could not be read: %w", err)
 	}
 	if len(body) > responseBodyLimit {
 		return nil, nil, fmt.Errorf("GitHub response exceeded the safe size limit")
