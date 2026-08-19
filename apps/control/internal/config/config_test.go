@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func initRepository(t *testing.T, remote string) string {
@@ -47,6 +48,37 @@ func TestLoadV1Projects(t *testing.T) {
 	}
 	if len(got.Projects) != 2 || got.Projects[1].Repository.Slug != "ai-daming/mamamate" {
 		t.Fatalf("Projects = %+v", got.Projects)
+	}
+}
+
+func TestVerifyMainCheckoutTimesOutHungGit(t *testing.T) {
+	if gitCommandTimeout != 5*time.Second {
+		t.Fatalf("gitCommandTimeout = %s, want 5s", gitCommandTimeout)
+	}
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	git := filepath.Join(bin, "git")
+	if err := os.WriteFile(git, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	started := time.Now()
+	err := verifyMainCheckoutWithTimeout(repo, "ai-daming/qianshou", 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("hung git command was accepted")
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("hung git command returned after %s, want prompt cancellation", elapsed)
+	}
+	if !strings.Contains(err.Error(), "cannot read origin from local checkout") {
+		t.Fatalf("error = %v, want existing sanitized error", err)
+	}
+	if strings.Contains(err.Error(), repo) || strings.Contains(err.Error(), "sleep 30") {
+		t.Fatalf("error leaked command details: %v", err)
 	}
 }
 

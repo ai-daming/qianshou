@@ -84,7 +84,7 @@ func CanStartBatch(ctx context.Context, token, gqlEndpoint, repo string, issues 
 	const bodyLimit = 1 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
 	if err != nil {
-		return BatchJudgments{}, fmt.Errorf("GitHub dependency response could not be read")
+		return BatchJudgments{}, fmt.Errorf("GitHub dependency response could not be read: %w", err)
 	}
 	if len(body) > bodyLimit {
 		return BatchJudgments{}, fmt.Errorf("GitHub dependency response exceeded the safe size limit")

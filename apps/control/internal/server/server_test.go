@@ -3,14 +3,142 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-daming/qianshou/apps/control/internal/config"
 	"github.com/ai-daming/qianshou/apps/control/internal/githubapi"
 )
+
+func TestHTTPServerHasBoundedConnectionTimeouts(t *testing.T) {
+	if githubFactsTimeout != 90*time.Second {
+		t.Fatalf("githubFactsTimeout = %s, want 90s", githubFactsTimeout)
+	}
+	server := newHTTPServer(http.NotFoundHandler())
+	if server.ReadHeaderTimeout != 10*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %s, want 10s", server.ReadHeaderTimeout)
+	}
+	if server.WriteTimeout != 120*time.Second {
+		t.Fatalf("WriteTimeout = %s, want 120s", server.WriteTimeout)
+	}
+	if server.IdleTimeout != 60*time.Second {
+		t.Fatalf("IdleTimeout = %s, want 60s", server.IdleTimeout)
+	}
+}
+
+type blockingFacts struct{}
+
+func (blockingFacts) ListMilestones(ctx context.Context, _ string) ([]githubapi.Milestone, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingFacts) ListMilestoneIssues(ctx context.Context, _ string, _ int) ([]githubapi.Issue, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (blockingFacts) GetIssue(ctx context.Context, _ string, _ int) (githubapi.Issue, error) {
+	<-ctx.Done()
+	return githubapi.Issue{}, ctx.Err()
+}
+
+func TestGitHubFactsDeadlineReturnsExistingStructuredError(t *testing.T) {
+	h := handlerWithFactsTimeout(testConfig(), blockingFacts{}, 20*time.Millisecond)
+	for _, path := range []string{
+		"/api/v1/projects/qianshou/milestones",
+		"/api/v1/projects/qianshou/milestones/1/issues",
+		"/api/v1/projects/qianshou/issues/36",
+	} {
+		t.Run(path, func(t *testing.T) {
+			started := time.Now()
+			rr := getJSON(t, h, path, nil)
+			if elapsed := time.Since(started); elapsed >= time.Second {
+				t.Fatalf("deadline response took %s, test must not wait for the production timeout", elapsed)
+			}
+			if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), `"code":"GITHUB_FACTS_UNAVAILABLE"`) {
+				t.Fatalf("GET %s = %d %s", path, rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), `"message":"Current GitHub facts could not be read completely before the request deadline."`) {
+				t.Fatalf("GET %s did not identify the deadline: %s", path, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestGitHubFactsBodyReadDeadlineUsesDeadlineMessage(t *testing.T) {
+	const issuesPath = "/repos/ai-daming/qianshou/issues"
+	cases := []struct {
+		name        string
+		path        string
+		stalledPath string
+	}{
+		{
+			name:        "REST response body",
+			path:        "/api/v1/projects/qianshou/milestones",
+			stalledPath: "/repos/ai-daming/qianshou/milestones",
+		},
+		{
+			name:        "GraphQL dependency response body",
+			path:        "/api/v1/projects/qianshou/milestones/1/issues",
+			stalledPath: "/graphql",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == tc.stalledPath:
+					w.WriteHeader(http.StatusOK)
+					flusher, ok := w.(http.Flusher)
+					if !ok {
+						t.Error("test server response does not support flushing")
+						return
+					}
+					flusher.Flush()
+					<-r.Context().Done()
+				case tc.stalledPath == "/graphql" && r.URL.Path == issuesPath:
+					err := json.NewEncoder(w).Encode([]map[string]any{{
+						"repository_url": "http://" + r.Host + "/repos/ai-daming/qianshou",
+						"number":         36,
+						"title":          "Issue",
+						"state":          "open",
+						"labels":         []any{},
+						"milestone":      map[string]any{"number": 1},
+					}})
+					if err != nil {
+						t.Errorf("write Issue response: %v", err)
+					}
+				default:
+					t.Errorf("unexpected upstream request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			httpClient := *srv.Client()
+			httpClient.Timeout = 50 * time.Millisecond
+			facts := githubapi.NewClient("test-token", srv.URL, srv.URL+"/graphql", &httpClient)
+			h := handlerWithFactsTimeout(testConfig(), facts, 5*time.Second)
+
+			started := time.Now()
+			rr := getJSON(t, h, tc.path, nil)
+			if elapsed := time.Since(started); elapsed >= 2*time.Second {
+				t.Fatalf("response took %s; the child request deadline did not fire first", elapsed)
+			}
+			if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), `"code":"GITHUB_FACTS_UNAVAILABLE"`) {
+				t.Fatalf("GET %s = %d %s", tc.path, rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), `"message":"Current GitHub facts could not be read completely before the request deadline."`) {
+				t.Fatalf("GET %s mislabeled a body-read deadline: %s", tc.path, rr.Body.String())
+			}
+		})
+	}
+}
 
 func TestHealthz(t *testing.T) {
 	ts := httptest.NewServer(handler(config.Config{}, &fakeFacts{}))
@@ -189,6 +317,22 @@ func TestCollectionFailureReturnsStructuredError(t *testing.T) {
 	}
 	if got.Error.Code == "" || got.Error.Message == "" || strings.Contains(got.Error.Message, context.DeadlineExceeded.Error()) {
 		t.Fatalf("unsafe or unstructured error: %+v", got)
+	}
+}
+
+func TestPaginationLimitFailureReturnsExistingStructuredError(t *testing.T) {
+	h := handler(testConfig(), &fakeFacts{err: errors.New("GitHub pagination page limit exceeded")})
+	for _, path := range []string{
+		"/api/v1/projects/qianshou/milestones",
+		"/api/v1/projects/qianshou/milestones/1/issues",
+	} {
+		rr := getJSON(t, h, path, nil)
+		if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), `"code":"GITHUB_FACTS_UNAVAILABLE"`) {
+			t.Fatalf("GET %s = %d %s", path, rr.Code, rr.Body.String())
+		}
+		if strings.Contains(rr.Body.String(), "request deadline") {
+			t.Fatalf("GET %s mislabeled a pagination trust failure as a deadline: %s", path, rr.Body.String())
+		}
 	}
 }
 

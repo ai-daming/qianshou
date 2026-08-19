@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -19,6 +20,10 @@ import (
 	"github.com/ai-daming/qianshou/apps/control/internal/deps"
 	"github.com/ai-daming/qianshou/apps/control/internal/githubapi"
 )
+
+const githubFactsTimeout = 90 * time.Second
+
+const githubFactsDeadlineMessage = "Current GitHub facts could not be read completely before the request deadline."
 
 func Serve(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -47,11 +52,17 @@ func Serve(args []string) error {
 	defer listener.Close()
 	// Loopback only. Remote operation arrives with M2-05 behind
 	// authentication and TLS; that boundary is deliberate.
-	server := &http.Server{
-		Handler:           handler(cfg, githubapi.New(token)),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	server := newHTTPServer(handler(cfg, githubapi.New(token)))
 	return server.Serve(listener)
+}
+
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 }
 
 type factsReader interface {
@@ -61,6 +72,10 @@ type factsReader interface {
 }
 
 func handler(cfg config.Config, facts factsReader) http.Handler {
+	return handlerWithFactsTimeout(cfg, facts, githubFactsTimeout)
+}
+
+func handlerWithFactsTimeout(cfg config.Config, facts factsReader, factsTimeout time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -82,9 +97,11 @@ func handler(cfg config.Config, facts factsReader) http.Handler {
 			writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "The configured Project was not found.")
 			return
 		}
-		milestones, err := facts.ListMilestones(r.Context(), project.Repository.Slug)
+		ctx, cancel := context.WithTimeout(r.Context(), factsTimeout)
+		defer cancel()
+		milestones, err := facts.ListMilestones(ctx, project.Repository.Slug)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", "Current GitHub Milestone facts could not be read completely.")
+			writeGitHubFactsError(w, ctx, err, "Current GitHub Milestone facts could not be read completely.")
 			return
 		}
 		if milestones == nil {
@@ -103,9 +120,11 @@ func handler(cfg config.Config, facts factsReader) http.Handler {
 			writeError(w, http.StatusBadRequest, "INVALID_MILESTONE_NUMBER", "Milestone number must be a positive integer.")
 			return
 		}
-		issues, err := facts.ListMilestoneIssues(r.Context(), project.Repository.Slug, milestone)
+		ctx, cancel := context.WithTimeout(r.Context(), factsTimeout)
+		defer cancel()
+		issues, err := facts.ListMilestoneIssues(ctx, project.Repository.Slug, milestone)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", "Current GitHub Milestone Issue facts could not be read completely.")
+			writeGitHubFactsError(w, ctx, err, "Current GitHub Milestone Issue facts could not be read completely.")
 			return
 		}
 		if issues == nil {
@@ -124,14 +143,24 @@ func handler(cfg config.Config, facts factsReader) http.Handler {
 			writeError(w, http.StatusBadRequest, "INVALID_ISSUE_NUMBER", "Issue number must be a positive integer.")
 			return
 		}
-		issue, err := facts.GetIssue(r.Context(), project.Repository.Slug, issueNumber)
+		ctx, cancel := context.WithTimeout(r.Context(), factsTimeout)
+		defer cancel()
+		issue, err := facts.GetIssue(ctx, project.Repository.Slug, issueNumber)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", "Current GitHub Issue facts could not be read completely.")
+			writeGitHubFactsError(w, ctx, err, "Current GitHub Issue facts could not be read completely.")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"projectId": project.ID, "issue": issue})
 	})
 	return mux
+}
+
+func writeGitHubFactsError(w http.ResponseWriter, ctx context.Context, err error, fallbackMessage string) {
+	message := fallbackMessage
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		message = githubFactsDeadlineMessage
+	}
+	writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", message)
 }
 
 type publicProject struct {

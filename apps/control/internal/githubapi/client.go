@@ -23,6 +23,7 @@ const (
 	DefaultGraphQLEndpoint = "https://api.github.com/graphql"
 	responseBodyLimit      = 4 << 20
 	dependencyBatchSize    = 100
+	maxPaginationPages     = 100
 )
 
 var slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -317,7 +318,12 @@ func (c *Client) eachPage(ctx context.Context, first string, consume func([]byte
 		return fmt.Errorf("invalid GitHub endpoint")
 	}
 	seen := make(map[string]struct{})
+	pages := 0
 	for current != nil {
+		if pages >= maxPaginationPages {
+			return fmt.Errorf("GitHub pagination exceeded the %d-page limit", maxPaginationPages)
+		}
+		pages++
 		key := current.String()
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("GitHub pagination loop detected")
@@ -353,7 +359,7 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]byte, []string, er
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("GitHub request failed")
+		return nil, nil, fmt.Errorf("GitHub request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.Request == nil || resp.Request.URL.String() != req.URL.String() {
@@ -361,7 +367,7 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]byte, []string, er
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, responseBodyLimit+1))
 	if err != nil {
-		return nil, nil, fmt.Errorf("GitHub response could not be read")
+		return nil, nil, fmt.Errorf("GitHub response could not be read: %w", err)
 	}
 	if len(body) > responseBodyLimit {
 		return nil, nil, fmt.Errorf("GitHub response exceeded the safe size limit")
