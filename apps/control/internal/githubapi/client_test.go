@@ -80,6 +80,7 @@ func TestListMilestonesRejectsUntrustworthyPagination(t *testing.T) {
 }
 
 func TestListMilestoneIssuesReturnsFactsAndDependencyJudgment(t *testing.T) {
+	var graphqlRequests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/ai-daming/qianshou/issues":
@@ -89,19 +90,19 @@ func TestListMilestoneIssuesReturnsFactsAndDependencyJudgment(t *testing.T) {
           {"repository_url":%q,"number":99,"title":"PR","state":"open","labels":[],"milestone":{"number":1},"pull_request":{"url":%q}}
         ]`, requestOrigin(r)+"/repos/ai-daming/qianshou", requestOrigin(r)+"/repos/ai-daming/qianshou", requestOrigin(r)+"/repos/ai-daming/qianshou", requestOrigin(r)+"/repos/ai-daming/qianshou/pulls/99")
 		case "/graphql":
+			graphqlRequests.Add(1)
 			var request struct {
-				Variables struct {
-					Number int `json:"number"`
-				} `json:"variables"`
+				Query string `json:"query"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Variables.Number == 30 {
-				fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":30,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
-				return
+			for _, want := range []string{"issue_30: issue(number:30)", "issue_31: issue(number:31)"} {
+				if !strings.Contains(request.Query, want) {
+					t.Errorf("batch query missing %q: %s", want, request.Query)
+				}
 			}
-			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":31,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":30,"state":"OPEN"}]}}}}}`)
+			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue_30":{"number":30,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}},"issue_31":{"number":31,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":30,"state":"OPEN"}]}}}}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -120,6 +121,109 @@ func TestListMilestoneIssuesReturnsFactsAndDependencyJudgment(t *testing.T) {
 	}
 	if len(got[1].Dependency.BlockedBy) != 1 || got[1].Dependency.BlockedBy[0] != 30 {
 		t.Fatalf("blockedBy = %v", got[1].Dependency.BlockedBy)
+	}
+	if graphqlRequests.Load() != 1 {
+		t.Fatalf("GraphQL requests = %d, want one batch", graphqlRequests.Load())
+	}
+}
+
+func TestListMilestoneIssuesFailsWholeCollectionAndStopsOnRateLimit(t *testing.T) {
+	var graphqlRequests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/ai-daming/qianshou/issues":
+			fmt.Fprintf(w, `[
+				{"repository_url":%q,"number":30,"title":"API","state":"open","labels":[],"milestone":{"number":1}},
+				{"repository_url":%q,"number":31,"title":"UI","state":"open","labels":[],"milestone":{"number":1}}
+			]`, requestOrigin(r)+"/repos/ai-daming/qianshou", requestOrigin(r)+"/repos/ai-daming/qianshou")
+		case "/graphql":
+			graphqlRequests.Add(1)
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"rate limit exceeded"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := newTestClient(srv).ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1); err == nil {
+		t.Fatal("systemic rate limit was flattened into per-Issue ERROR results")
+	}
+	if graphqlRequests.Load() != 1 {
+		t.Fatalf("GraphQL requests after rate limit = %d, want immediate stop", graphqlRequests.Load())
+	}
+}
+
+func TestListMilestoneIssuesUsesOneDependencyBatchPerHundredIssues(t *testing.T) {
+	var graphqlRequests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/ai-daming/qianshou/issues":
+			start, end := 1, 100
+			if r.URL.Query().Get("page") == "2" {
+				start, end = 101, 101
+			} else {
+				w.Header().Set("Link", fmt.Sprintf(`<%s/repos/ai-daming/qianshou/issues?milestone=1&state=all&per_page=100&page=2>; rel="next"`, requestOrigin(r)))
+			}
+			items := make([]map[string]any, 0, end-start+1)
+			for number := start; number <= end; number++ {
+				items = append(items, map[string]any{
+					"repository_url": requestOrigin(r) + "/repos/ai-daming/qianshou",
+					"number":         number,
+					"title":          fmt.Sprintf("Issue %d", number),
+					"state":          "open",
+					"labels":         []any{},
+					"milestone":      map[string]any{"number": 1},
+				})
+			}
+			if err := json.NewEncoder(w).Encode(items); err != nil {
+				t.Fatal(err)
+			}
+		case "/graphql":
+			requestNumber := int(graphqlRequests.Add(1))
+			var request struct {
+				Query string `json:"query"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			start, end := 1, 100
+			if requestNumber == 2 {
+				start, end = 101, 101
+			}
+			repository := map[string]any{"nameWithOwner": "ai-daming/qianshou"}
+			for number := start; number <= end; number++ {
+				alias := fmt.Sprintf("issue_%d", number)
+				if !strings.Contains(request.Query, fmt.Sprintf("%s: issue(number:%d)", alias, number)) {
+					t.Errorf("batch %d missing Issue #%d", requestNumber, number)
+				}
+				repository[alias] = map[string]any{
+					"number": number,
+					"blockedBy": map[string]any{
+						"pageInfo": map[string]any{"hasNextPage": false},
+						"nodes":    []any{},
+					},
+				}
+			}
+			if err := json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": repository}}); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	issues, err := newTestClient(srv).ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+	if err != nil {
+		t.Fatalf("ListMilestoneIssues: %v", err)
+	}
+	if len(issues) != 101 {
+		t.Fatalf("issues = %d, want 101", len(issues))
+	}
+	if graphqlRequests.Load() != 2 {
+		t.Fatalf("GraphQL requests = %d, want two batches for 101 Issues", graphqlRequests.Load())
 	}
 }
 

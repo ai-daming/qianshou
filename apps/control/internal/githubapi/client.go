@@ -22,6 +22,7 @@ const (
 	DefaultRESTEndpoint    = "https://api.github.com"
 	DefaultGraphQLEndpoint = "https://api.github.com/graphql"
 	responseBodyLimit      = 4 << 20
+	dependencyBatchSize    = 100
 )
 
 var slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -139,8 +140,28 @@ func (c *Client) ListMilestoneIssues(ctx context.Context, repo string, milestone
 	if err != nil {
 		return nil, fmt.Errorf("GitHub milestone Issue facts are unavailable: %w", err)
 	}
-	for i := range issues {
-		issues[i].Dependency = c.dependency(ctx, repo, issues[i].Number)
+	for start := 0; start < len(issues); start += dependencyBatchSize {
+		end := min(start+dependencyBatchSize, len(issues))
+		numbers := make([]int, 0, end-start)
+		for i := start; i < end; i++ {
+			numbers = append(numbers, issues[i].Number)
+		}
+		batch, err := deps.CanStartBatch(ctx, c.token, c.graphqlEndpoint, repo, numbers, c.httpClient)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub dependency facts are unavailable for the Milestone: %w", err)
+		}
+		for i := start; i < end; i++ {
+			issueNumber := issues[i].Number
+			if batch.Errors[issueNumber] != nil {
+				issues[i].Dependency = dependencyError()
+				continue
+			}
+			judgment, ok := batch.Judgments[issueNumber]
+			if !ok {
+				return nil, fmt.Errorf("GitHub dependency batch omitted Issue #%d", issueNumber)
+			}
+			issues[i].Dependency = dependencyFromJudgment(judgment)
+		}
 	}
 	return issues, nil
 }
@@ -261,18 +282,26 @@ func (c *Client) decodeIssue(body []byte, repo string, expectedMilestone int) (I
 func (c *Client) dependency(ctx context.Context, repo string, issue int) Dependency {
 	judgment, err := deps.CanStart(ctx, c.token, c.graphqlEndpoint, repo, issue, c.httpClient)
 	if err != nil {
-		return Dependency{
-			Status: DependencyError,
-			Error: &DependencyErrorDetail{
-				Code:    "DEPENDENCY_FACTS_UNAVAILABLE",
-				Message: "GitHub dependency facts are incomplete or unavailable.",
-			},
-		}
+		return dependencyError()
 	}
+	return dependencyFromJudgment(judgment)
+}
+
+func dependencyFromJudgment(judgment deps.Judgment) Dependency {
 	if len(judgment.BlockedBy) > 0 {
 		return Dependency{Status: DependencyBlocked, BlockedBy: judgment.BlockedBy}
 	}
 	return Dependency{Status: DependencyReady}
+}
+
+func dependencyError() Dependency {
+	return Dependency{
+		Status: DependencyError,
+		Error: &DependencyErrorDetail{
+			Code:    "DEPENDENCY_FACTS_UNAVAILABLE",
+			Message: "GitHub dependency facts are incomplete or unavailable.",
+		},
+	}
 }
 
 func validateRepo(repo string) error {
