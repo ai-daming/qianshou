@@ -47,6 +47,8 @@ export type Issue = {
   title: string;
   state: OpenClosedState;
   labels: Array<string>;
+  body?: string;
+  updatedAt?: string;
   dependency: DependencyJudgment;
 };
 
@@ -79,6 +81,199 @@ export type DependencyError = {
   error: ErrorDetail;
 };
 
+export type CreateRunnerBindingRequest = {
+  mainCheckoutPath: string;
+};
+
+export type RunnerBinding = {
+  id: string;
+  runnerId: string;
+  projectId: string;
+  mainCheckoutPath: string;
+  repositoryIdAtBinding: number;
+  createdAt: string;
+};
+
+export type CreateConversationRequest = {
+  engineId: string;
+  idempotencyKey: string;
+};
+
+export type Conversation = {
+  id: string;
+  role: "discussion";
+  engineId: string;
+  runnerProjectBindingId: string;
+  vendorSessionEstablished: boolean;
+  status: "IDLE" | "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED";
+  createdAt: string;
+  archivedAt: string | null;
+};
+
+export type StartDiscussionRunRequest = {
+  prompt: string;
+  idempotencyKey: string;
+};
+
+export type AgentRun = {
+  id: string;
+  conversationId: string;
+  state: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED" | "INTERRUPTED";
+  queuedAt: string;
+  startedAt: string | null;
+  terminalAt: string | null;
+  terminalDetail: unknown;
+};
+
+export type CancelRunResponse = {
+  runId: string;
+  issueNumber: number;
+  cancellationRequested: true;
+};
+
+export type RunEvent = {
+  sequence: number;
+  sourceFrameSequence: number | null;
+  kind:
+    | "USER_MESSAGE"
+    | "AGENT_MESSAGE"
+    | "TOOL_CALL"
+    | "TOOL_RESULT"
+    | "STATUS"
+    | "ERROR"
+    | "RESULT";
+  payload: unknown;
+  occurredAt: string;
+};
+
+export type RunEventPage = {
+  runId: string;
+  events: Array<RunEvent>;
+  nextCursor: number | null;
+};
+
+export type CreateBriefVersionRequest = {
+  content: string;
+  sourceConversationId: string;
+  idempotencyKey: string;
+  expectedIssueUpdatedAt: string;
+  expectedIssueBodySha256: string;
+};
+
+export type BriefVersion = {
+  id: string;
+  content: string;
+  contentSha256: string;
+  sourceIssueUpdatedAt: string;
+  sourceIssueBodySha256: string;
+  status: "DRAFT" | "ADOPTED" | "SUPERSEDED";
+  createdAt: string;
+};
+
+export type Criterion = {
+  id: string;
+  description: string;
+  verificationMethod:
+    | "AUTOMATED_TEST"
+    | "PR_REVIEW"
+    | "MANUAL_ACCEPTANCE"
+    | "RUNTIME_VERIFICATION"
+    | "EXTERNAL_EVIDENCE";
+  requiredEvidence: string;
+  required: boolean;
+};
+
+export type AdoptDeliveryBaselineRequest = {
+  briefVersionId: string;
+  adoptionKey: string;
+  expectedIssueUpdatedAt: string;
+  expectedIssueBodySha256: string;
+  issueDoD: Array<Criterion>;
+};
+
+export type DeliveryBaseline = {
+  id: string;
+  trackId: string;
+  sequence: number;
+  adoptionKey: string;
+  issueUpdatedAt: string;
+  issueBody: string;
+  issueBodySha256: string;
+  briefVersionId: string;
+  issueDoD: Array<Criterion>;
+  payloadSha256: string;
+  adoptedAt: string;
+};
+
+export type EngineSummary = {
+  id: string;
+  adapter: "codex" | "claude";
+};
+
+export type ActiveDeliveryTrack = {
+  id: string;
+  lifecycle: "ACTIVE";
+  createdAt: string;
+};
+
+export type DeliveryWorkspace = {
+  activeTrack: ActiveDeliveryTrack | null;
+  baselines: Array<DeliveryBaseline>;
+  deliveryPaused: boolean;
+};
+
+export type StopCondition = {
+  id: string;
+  trackId: string;
+  baselineId: string | null;
+  kind: string;
+  reason: string;
+  evidence: {
+    [key: string]: unknown;
+  };
+  state: "OPEN" | "RESOLVED";
+  createdAt: string;
+  resolution: string | null;
+  outcome: {
+    [key: string]: unknown;
+  } | null;
+  resolvedAt: string | null;
+};
+
+export type ResolveStopConditionRequest = {
+  resolution:
+    | "CONTINUE"
+    | "ADOPT_NEW_BASELINE"
+    | "REPAIR"
+    | "REREVIEW"
+    | "SPLIT"
+    | "SUPERSEDE"
+    | "ABANDON";
+  outcome: {
+    [key: string]: unknown;
+  };
+};
+
+export type BlockedReason = {
+  code: string;
+  message: string;
+};
+
+export type IssueWorkspace = {
+  projectId: string;
+  issueNumber: number;
+  githubStatus: "CURRENT" | "UNAVAILABLE";
+  issue: Issue | null;
+  currentIssueBodySha256: string | null;
+  engines: Array<EngineSummary>;
+  conversations: Array<Conversation>;
+  briefVersions: Array<BriefVersion>;
+  runs: Array<AgentRun>;
+  delivery: DeliveryWorkspace;
+  stopConditions: Array<StopCondition>;
+  blockedReasons: Array<BlockedReason>;
+};
+
 export type ErrorDetail = {
   code: string;
   message: string;
@@ -93,6 +288,12 @@ export type ProjectId = string;
 export type MilestoneNumber = number;
 
 export type IssueNumber = number;
+
+export type ConversationId = string;
+
+export type RunId = string;
+
+export type StopId = string;
 
 export type GetHealthData = {
   body?: never;
@@ -264,3 +465,379 @@ export type GetProjectIssueResponses = {
 };
 
 export type GetProjectIssueResponse = GetProjectIssueResponses[keyof GetProjectIssueResponses];
+
+export type EstablishRunnerBindingData = {
+  body: CreateRunnerBindingRequest;
+  path: {
+    projectId: string;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/runner-binding";
+};
+
+export type EstablishRunnerBindingErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The central Project does not exist
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+  /**
+   * Current GitHub facts could not be read completely
+   */
+  502: ErrorResponse;
+};
+
+export type EstablishRunnerBindingError =
+  EstablishRunnerBindingErrors[keyof EstablishRunnerBindingErrors];
+
+export type EstablishRunnerBindingResponses = {
+  /**
+   * Existing identical binding revalidated
+   */
+  200: RunnerBinding;
+  /**
+   * Binding established
+   */
+  201: RunnerBinding;
+};
+
+export type EstablishRunnerBindingResponse =
+  EstablishRunnerBindingResponses[keyof EstablishRunnerBindingResponses];
+
+export type GetIssueWorkspaceData = {
+  body?: never;
+  path: {
+    projectId: string;
+    issueNumber: number;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/workspace";
+};
+
+export type GetIssueWorkspaceErrors = {
+  /**
+   * A path number is invalid
+   */
+  400: ErrorResponse;
+  /**
+   * The central Project does not exist
+   */
+  404: ErrorResponse;
+  /**
+   * The central ledger could not be read or updated
+   */
+  500: ErrorResponse;
+};
+
+export type GetIssueWorkspaceError = GetIssueWorkspaceErrors[keyof GetIssueWorkspaceErrors];
+
+export type GetIssueWorkspaceResponses = {
+  /**
+   * Issue Discussion and delivery workspace
+   */
+  200: IssueWorkspace;
+};
+
+export type GetIssueWorkspaceResponse =
+  GetIssueWorkspaceResponses[keyof GetIssueWorkspaceResponses];
+
+export type CreateDiscussionConversationData = {
+  body: CreateConversationRequest;
+  path: {
+    projectId: string;
+    issueNumber: number;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/conversations";
+};
+
+export type CreateDiscussionConversationErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The central Project does not exist
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+  /**
+   * Current GitHub facts could not be read completely
+   */
+  502: ErrorResponse;
+};
+
+export type CreateDiscussionConversationError =
+  CreateDiscussionConversationErrors[keyof CreateDiscussionConversationErrors];
+
+export type CreateDiscussionConversationResponses = {
+  /**
+   * Conversation created or identically retried
+   */
+  201: Conversation;
+};
+
+export type CreateDiscussionConversationResponse =
+  CreateDiscussionConversationResponses[keyof CreateDiscussionConversationResponses];
+
+export type StartDiscussionRunData = {
+  body: StartDiscussionRunRequest;
+  path: {
+    projectId: string;
+    issueNumber: number;
+    conversationId: string;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/conversations/{conversationId}/runs";
+};
+
+export type StartDiscussionRunErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The requested workflow artifact does not exist in this Issue workspace
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+  /**
+   * Current GitHub facts could not be read completely
+   */
+  502: ErrorResponse;
+};
+
+export type StartDiscussionRunError = StartDiscussionRunErrors[keyof StartDiscussionRunErrors];
+
+export type StartDiscussionRunResponses = {
+  /**
+   * Identical terminal or running command retry
+   */
+  200: AgentRun;
+  /**
+   * Agent process accepted and owned by the embedded Runner
+   */
+  202: AgentRun;
+};
+
+export type StartDiscussionRunResponse =
+  StartDiscussionRunResponses[keyof StartDiscussionRunResponses];
+
+export type CancelDiscussionRunData = {
+  body?: never;
+  path: {
+    projectId: string;
+    issueNumber: number;
+    runId: string;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/runs/{runId}/cancel";
+};
+
+export type CancelDiscussionRunErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The requested workflow artifact does not exist in this Issue workspace
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+};
+
+export type CancelDiscussionRunError = CancelDiscussionRunErrors[keyof CancelDiscussionRunErrors];
+
+export type CancelDiscussionRunResponses = {
+  /**
+   * Cancellation signal accepted
+   */
+  202: CancelRunResponse;
+};
+
+export type CancelDiscussionRunResponse =
+  CancelDiscussionRunResponses[keyof CancelDiscussionRunResponses];
+
+export type ListDiscussionRunEventsData = {
+  body?: never;
+  path: {
+    projectId: string;
+    issueNumber: number;
+    runId: string;
+  };
+  query?: {
+    after?: number;
+    limit?: number;
+  };
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/runs/{runId}/events";
+};
+
+export type ListDiscussionRunEventsErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The requested workflow artifact does not exist in this Issue workspace
+   */
+  404: ErrorResponse;
+  /**
+   * The central ledger could not be read or updated
+   */
+  500: ErrorResponse;
+};
+
+export type ListDiscussionRunEventsError =
+  ListDiscussionRunEventsErrors[keyof ListDiscussionRunEventsErrors];
+
+export type ListDiscussionRunEventsResponses = {
+  /**
+   * Gap-free event page
+   */
+  200: RunEventPage;
+};
+
+export type ListDiscussionRunEventsResponse =
+  ListDiscussionRunEventsResponses[keyof ListDiscussionRunEventsResponses];
+
+export type CreateBriefVersionData = {
+  body: CreateBriefVersionRequest;
+  path: {
+    projectId: string;
+    issueNumber: number;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/briefs";
+};
+
+export type CreateBriefVersionErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The requested workflow artifact does not exist in this Issue workspace
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+  /**
+   * Current GitHub facts could not be read completely
+   */
+  502: ErrorResponse;
+};
+
+export type CreateBriefVersionError = CreateBriefVersionErrors[keyof CreateBriefVersionErrors];
+
+export type CreateBriefVersionResponses = {
+  /**
+   * BriefVersion created or identically retried
+   */
+  201: BriefVersion;
+};
+
+export type CreateBriefVersionResponse =
+  CreateBriefVersionResponses[keyof CreateBriefVersionResponses];
+
+export type AdoptDeliveryBaselineData = {
+  body: AdoptDeliveryBaselineRequest;
+  path: {
+    projectId: string;
+    issueNumber: number;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/adoptions";
+};
+
+export type AdoptDeliveryBaselineErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The requested workflow artifact does not exist in this Issue workspace
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+  /**
+   * Current GitHub facts could not be read completely
+   */
+  502: ErrorResponse;
+};
+
+export type AdoptDeliveryBaselineError =
+  AdoptDeliveryBaselineErrors[keyof AdoptDeliveryBaselineErrors];
+
+export type AdoptDeliveryBaselineResponses = {
+  /**
+   * Identical adoption retry
+   */
+  200: DeliveryBaseline;
+  /**
+   * DeliveryBaseline adopted
+   */
+  201: DeliveryBaseline;
+};
+
+export type AdoptDeliveryBaselineResponse =
+  AdoptDeliveryBaselineResponses[keyof AdoptDeliveryBaselineResponses];
+
+export type ResolveStopConditionData = {
+  body: ResolveStopConditionRequest;
+  path: {
+    projectId: string;
+    issueNumber: number;
+    stopId: string;
+  };
+  query?: never;
+  url: "/api/v1/projects/{projectId}/issues/{issueNumber}/stops/{stopId}/resolve";
+};
+
+export type ResolveStopConditionErrors = {
+  /**
+   * The request is invalid or ambiguous
+   */
+  400: ErrorResponse;
+  /**
+   * The requested workflow artifact does not exist in this Issue workspace
+   */
+  404: ErrorResponse;
+  /**
+   * Current evidence or immutable workflow state conflicts with the request
+   */
+  409: ErrorResponse;
+};
+
+export type ResolveStopConditionError =
+  ResolveStopConditionErrors[keyof ResolveStopConditionErrors];
+
+export type ResolveStopConditionResponses = {
+  /**
+   * StopCondition resolved or identically retried
+   */
+  200: StopCondition;
+};
+
+export type ResolveStopConditionResponse =
+  ResolveStopConditionResponses[keyof ResolveStopConditionResponses];

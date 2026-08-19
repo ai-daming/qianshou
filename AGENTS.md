@@ -14,13 +14,6 @@ Before changing Qianshou architecture or workflow semantics, read:
 - Keep the server bound to `127.0.0.1`. Never expose GitHub credentials or raw environment values to the browser.
 - Use test-first development for workflow-state changes.
 
-## M1 自举临时规则
-
-- 本节只适用于 Qianshou 自身的 M1，并且仅在正式的 DeliveryBaseline 采用与持久化能力尚不可用时生效。
-- 在此期间，用户可以在当前对话中明确采用一份人工基线，临时满足 `issue-implementer` 对 adopted development brief、DeliveryBaseline 和 resolved DoD 的前置证据要求。人工基线必须包含：GitHub Issue 编号及 `updatedAt`、冻结正文或正文哈希、仓库与 worktree、目标分支与 base SHA、采用的开发说明、resolved DoD，以及允许和禁止的操作。
-- 人工基线不得伪装成 ledger 中已经存在的 DeliveryBaseline，也不得放松 TDD、PR、独立 Review、reviewed head SHA 或明确授权等门禁；Implementer handoff 和 Reviewer input 必须携带同一份人工基线。
-- 一旦正式的 DeliveryBaseline 采用与持久化能力可用，本节立即失效，并应由使该能力可用的同一变更删除。本规则不得用于其他 Project、M1 之后的交付或一般故障降级。
-
 ## 严格度与说明规约
 
 - 说人话：先讲清楚用户要解决什么问题、得到什么结果，再讲技术名词；不要用术语掩盖没想明白的事。

@@ -108,6 +108,268 @@ paths:
           $ref: "#/components/responses/ProjectNotFound"
         "502":
           $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/runner-binding:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: establishRunnerBinding
+      summary: Explicitly validate and bind this Runner to the Project main checkout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRunnerBindingRequest"
+      responses:
+        "200":
+          description: Existing identical binding revalidated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunnerBinding"
+        "201":
+          description: Binding established
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunnerBinding"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/workspace:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+    get:
+      operationId: getIssueWorkspace
+      summary: Read durable Discussion artifacts and reconcile current GitHub scope evidence
+      responses:
+        "200":
+          description: Issue Discussion and delivery workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueWorkspace"
+        "400":
+          $ref: "#/components/responses/InvalidNumber"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "500":
+          $ref: "#/components/responses/LedgerUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/conversations:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+    post:
+      operationId: createDiscussionConversation
+      summary: Create one immutable-engine Discussion conversation after explicit user action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationRequest"
+      responses:
+        "201":
+          description: Conversation created or identically retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/ProjectNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/conversations/{conversationId}/runs:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      operationId: startDiscussionRun
+      summary: Explicitly start or continue one Discussion Agent turn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartDiscussionRunRequest"
+      responses:
+        "200":
+          description: Identical terminal or running command retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRun"
+        "202":
+          description: Agent process accepted and owned by the embedded Runner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentRun"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/WorkflowNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/runs/{runId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+      - $ref: "#/components/parameters/RunId"
+    post:
+      operationId: cancelDiscussionRun
+      summary: Explicitly request cancellation of a currently owned Agent process
+      responses:
+        "202":
+          description: Cancellation signal accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelRunResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/WorkflowNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/runs/{runId}/events:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+      - $ref: "#/components/parameters/RunId"
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+    get:
+      operationId: listDiscussionRunEvents
+      summary: Page normalized run events by an exclusive sequence cursor
+      responses:
+        "200":
+          description: Gap-free event page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunEventPage"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/WorkflowNotFound"
+        "500":
+          $ref: "#/components/responses/LedgerUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/briefs:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+    post:
+      operationId: createBriefVersion
+      summary: Freeze an immutable development brief against current Issue evidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBriefVersionRequest"
+      responses:
+        "201":
+          description: BriefVersion created or identically retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BriefVersion"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/WorkflowNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/adoptions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+    post:
+      operationId: adoptDeliveryBaseline
+      summary: Explicitly adopt one BriefVersion and freeze current GitHub Issue evidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdoptDeliveryBaselineRequest"
+      responses:
+        "200":
+          description: Identical adoption retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryBaseline"
+        "201":
+          description: DeliveryBaseline adopted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryBaseline"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/WorkflowNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
+  /api/v1/projects/{projectId}/issues/{issueNumber}/stops/{stopId}/resolve:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/IssueNumber"
+      - $ref: "#/components/parameters/StopId"
+    post:
+      operationId: resolveStopCondition
+      summary: Record one explicit decision and outcome for a StopCondition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveStopConditionRequest"
+      responses:
+        "200":
+          description: StopCondition resolved or identically retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopCondition"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/WorkflowNotFound"
+        "409":
+          $ref: "#/components/responses/WorkflowConflict"
 components:
   parameters:
     ProjectId:
@@ -131,6 +393,27 @@ components:
       schema:
         type: integer
         minimum: 1
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    StopId:
+      name: stopId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
   responses:
     InvalidNumber:
       description: A path number is invalid
@@ -158,6 +441,30 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     ProjectIdentityConflict:
       description: The Project ID or GitHub repository ID is already owned
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InvalidRequest:
+      description: The request is invalid or ambiguous
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    WorkflowNotFound:
+      description: The requested workflow artifact does not exist in this Issue workspace
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    WorkflowConflict:
+      description: Current evidence or immutable workflow state conflicts with the request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    LedgerUnavailable:
+      description: The central ledger could not be read or updated
       content:
         application/json:
           schema:
@@ -255,6 +562,10 @@ components:
           type: array
           items:
             type: string
+        body:
+          type: string
+        updatedAt:
+          type: string
         dependency:
           $ref: "#/components/schemas/DependencyJudgment"
     MilestoneIssuesResponse:
@@ -321,6 +632,283 @@ components:
           enum: [ERROR]
         error:
           $ref: "#/components/schemas/ErrorDetail"
+    CreateRunnerBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [mainCheckoutPath]
+      properties:
+        mainCheckoutPath:
+          type: string
+          minLength: 1
+    RunnerBinding:
+      type: object
+      additionalProperties: false
+      required: [id, runnerId, projectId, mainCheckoutPath, repositoryIdAtBinding, createdAt]
+      properties:
+        id: {type: string}
+        runnerId: {type: string}
+        projectId: {type: string}
+        mainCheckoutPath: {type: string}
+        repositoryIdAtBinding: {type: integer, format: int64, minimum: 1}
+        createdAt: {type: string}
+    CreateConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [engineId, idempotencyKey]
+      properties:
+        engineId: {type: string, minLength: 1}
+        idempotencyKey: {type: string, minLength: 1}
+    Conversation:
+      type: object
+      additionalProperties: false
+      required: [id, role, engineId, runnerProjectBindingId, vendorSessionEstablished, status, createdAt, archivedAt]
+      properties:
+        id: {type: string}
+        role: {type: string, enum: [discussion]}
+        engineId: {type: string}
+        runnerProjectBindingId: {type: string}
+        vendorSessionEstablished: {type: boolean}
+        status:
+          type: string
+          enum: [IDLE, QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED, INTERRUPTED]
+        createdAt: {type: string}
+        archivedAt:
+          type: [string, "null"]
+    StartDiscussionRunRequest:
+      type: object
+      additionalProperties: false
+      required: [prompt, idempotencyKey]
+      properties:
+        prompt: {type: string, minLength: 1}
+        idempotencyKey: {type: string, minLength: 1}
+    AgentRun:
+      type: object
+      additionalProperties: false
+      required: [id, conversationId, state, queuedAt, startedAt, terminalAt, terminalDetail]
+      properties:
+        id: {type: string}
+        conversationId: {type: string}
+        state:
+          type: string
+          enum: [QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED, INTERRUPTED]
+        queuedAt: {type: string}
+        startedAt:
+          type: [string, "null"]
+        terminalAt:
+          type: [string, "null"]
+        terminalDetail: {}
+    CancelRunResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, issueNumber, cancellationRequested]
+      properties:
+        runId: {type: string}
+        issueNumber: {type: integer, minimum: 1}
+        cancellationRequested: {type: boolean, const: true}
+    RunEvent:
+      type: object
+      additionalProperties: false
+      required: [sequence, sourceFrameSequence, kind, payload, occurredAt]
+      properties:
+        sequence: {type: integer, minimum: 1}
+        sourceFrameSequence:
+          type: [integer, "null"]
+          minimum: 1
+        kind:
+          type: string
+          enum: [USER_MESSAGE, AGENT_MESSAGE, TOOL_CALL, TOOL_RESULT, STATUS, ERROR, RESULT]
+        payload: {}
+        occurredAt: {type: string}
+    RunEventPage:
+      type: object
+      additionalProperties: false
+      required: [runId, events, nextCursor]
+      properties:
+        runId: {type: string}
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunEvent"
+        nextCursor:
+          type: [integer, "null"]
+          minimum: 1
+    CreateBriefVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [content, sourceConversationId, idempotencyKey, expectedIssueUpdatedAt, expectedIssueBodySha256]
+      properties:
+        content: {type: string, minLength: 1}
+        sourceConversationId: {type: string, minLength: 1}
+        idempotencyKey: {type: string, minLength: 1}
+        expectedIssueUpdatedAt: {type: string, minLength: 1}
+        expectedIssueBodySha256: {type: string, pattern: '^[a-fA-F0-9]{64}$'}
+    BriefVersion:
+      type: object
+      additionalProperties: false
+      required: [id, content, contentSha256, sourceIssueUpdatedAt, sourceIssueBodySha256, status, createdAt]
+      properties:
+        id: {type: string}
+        content: {type: string}
+        contentSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        sourceIssueUpdatedAt: {type: string}
+        sourceIssueBodySha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        status: {type: string, enum: [DRAFT, ADOPTED, SUPERSEDED]}
+        createdAt: {type: string}
+    Criterion:
+      type: object
+      additionalProperties: false
+      required: [id, description, verificationMethod, requiredEvidence, required]
+      properties:
+        id: {type: string, minLength: 1}
+        description: {type: string, minLength: 1}
+        verificationMethod:
+          type: string
+          enum: [AUTOMATED_TEST, PR_REVIEW, MANUAL_ACCEPTANCE, RUNTIME_VERIFICATION, EXTERNAL_EVIDENCE]
+        requiredEvidence: {type: string, minLength: 1}
+        required: {type: boolean}
+    AdoptDeliveryBaselineRequest:
+      type: object
+      additionalProperties: false
+      required: [briefVersionId, adoptionKey, expectedIssueUpdatedAt, expectedIssueBodySha256, issueDoD]
+      properties:
+        briefVersionId: {type: string, minLength: 1}
+        adoptionKey: {type: string, minLength: 1}
+        expectedIssueUpdatedAt: {type: string, minLength: 1}
+        expectedIssueBodySha256: {type: string, pattern: '^[a-fA-F0-9]{64}$'}
+        issueDoD:
+          type: array
+          items:
+            $ref: "#/components/schemas/Criterion"
+    DeliveryBaseline:
+      type: object
+      additionalProperties: false
+      required: [id, trackId, sequence, adoptionKey, issueUpdatedAt, issueBody, issueBodySha256, briefVersionId, issueDoD, payloadSha256, adoptedAt]
+      properties:
+        id: {type: string}
+        trackId: {type: string}
+        sequence: {type: integer, minimum: 1}
+        adoptionKey: {type: string}
+        issueUpdatedAt: {type: string}
+        issueBody: {type: string}
+        issueBodySha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        briefVersionId: {type: string}
+        issueDoD:
+          type: array
+          items:
+            $ref: "#/components/schemas/Criterion"
+        payloadSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        adoptedAt: {type: string}
+    EngineSummary:
+      type: object
+      additionalProperties: false
+      required: [id, adapter]
+      properties:
+        id: {type: string}
+        adapter: {type: string, enum: [codex, claude]}
+    ActiveDeliveryTrack:
+      type: object
+      additionalProperties: false
+      required: [id, lifecycle, createdAt]
+      properties:
+        id: {type: string}
+        lifecycle: {type: string, enum: [ACTIVE]}
+        createdAt: {type: string}
+    DeliveryWorkspace:
+      type: object
+      additionalProperties: false
+      required: [activeTrack, baselines, deliveryPaused]
+      properties:
+        activeTrack:
+          oneOf:
+            - $ref: "#/components/schemas/ActiveDeliveryTrack"
+            - type: "null"
+        baselines:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryBaseline"
+        deliveryPaused: {type: boolean}
+    StopCondition:
+      type: object
+      additionalProperties: false
+      required: [id, trackId, baselineId, kind, reason, evidence, state, createdAt, resolution, outcome, resolvedAt]
+      properties:
+        id: {type: string}
+        trackId: {type: string}
+        baselineId:
+          type: [string, "null"]
+        kind: {type: string}
+        reason: {type: string}
+        evidence:
+          type: object
+          additionalProperties: true
+        state: {type: string, enum: [OPEN, RESOLVED]}
+        createdAt: {type: string}
+        resolution:
+          type: [string, "null"]
+        outcome:
+          type: [object, "null"]
+          additionalProperties: true
+        resolvedAt:
+          type: [string, "null"]
+    ResolveStopConditionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolution, outcome]
+      properties:
+        resolution:
+          type: string
+          enum: [CONTINUE, ADOPT_NEW_BASELINE, REPAIR, REREVIEW, SPLIT, SUPERSEDE, ABANDON]
+        outcome:
+          type: object
+          additionalProperties: true
+    BlockedReason:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+    IssueWorkspace:
+      type: object
+      additionalProperties: false
+      required: [projectId, issueNumber, githubStatus, issue, currentIssueBodySha256, engines, conversations, briefVersions, runs, delivery, stopConditions, blockedReasons]
+      properties:
+        projectId: {type: string}
+        issueNumber: {type: integer, minimum: 1}
+        githubStatus: {type: string, enum: [CURRENT, UNAVAILABLE]}
+        issue:
+          oneOf:
+            - $ref: "#/components/schemas/Issue"
+            - type: "null"
+        currentIssueBodySha256:
+          type: [string, "null"]
+          pattern: '^[a-f0-9]{64}$'
+        engines:
+          type: array
+          items:
+            $ref: "#/components/schemas/EngineSummary"
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Conversation"
+        briefVersions:
+          type: array
+          items:
+            $ref: "#/components/schemas/BriefVersion"
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentRun"
+        delivery:
+          $ref: "#/components/schemas/DeliveryWorkspace"
+        stopConditions:
+          type: array
+          items:
+            $ref: "#/components/schemas/StopCondition"
+        blockedReasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockedReason"
     ErrorDetail:
       type: object
       additionalProperties: false

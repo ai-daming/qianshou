@@ -359,6 +359,34 @@ func TestIssueDependencyFailureIsVisibleInsteadOfReady(t *testing.T) {
 	}
 }
 
+func TestGetIssueReturnsExactAdoptionEvidence(t *testing.T) {
+	const body = "Goal first.\n\n## DoD\n- frozen exactly\n"
+	const updatedAt = "2026-08-19T15:09:52Z"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/ai-daming/qianshou/issues/6":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"repository_url": requestOrigin(r) + "/repos/ai-daming/qianshou",
+				"number":         6, "title": "Discussion", "state": "open", "labels": []any{},
+				"body": body, "updated_at": updatedAt,
+			})
+		case "/graphql":
+			fmt.Fprint(w, `{"data":{"repository":{"nameWithOwner":"ai-daming/qianshou","issue":{"number":6,"blockedBy":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	issue, err := newTestClient(srv).GetIssue(context.Background(), "ai-daming/qianshou", 6)
+	if err != nil {
+		t.Fatalf("GetIssue: %v", err)
+	}
+	if issue.Body != body || issue.UpdatedAt != updatedAt {
+		t.Fatalf("adoption evidence was not exact: body=%q updatedAt=%q", issue.Body, issue.UpdatedAt)
+	}
+}
+
 func TestRESTFactsFailClosedOnMissingContradictoryOrOversizedData(t *testing.T) {
 	cases := []struct {
 		name string

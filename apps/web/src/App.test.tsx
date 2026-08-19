@@ -1,10 +1,11 @@
-import type { Issue, Milestone, Project } from "@qianshou/api-client";
+import type { Issue, IssueWorkspace, Milestone, Project } from "@qianshou/api-client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 import type { FactsClient } from "./facts.js";
+import type { WorkflowClient } from "./workflow.js";
 
 const projects: Project[] = [
   {
@@ -53,16 +54,249 @@ function makeFacts(overrides: Partial<FactsClient> = {}): FactsClient {
   };
 }
 
-function renderApp(facts: FactsClient) {
+const workspace: IssueWorkspace = {
+  projectId: "qianshou",
+  issueNumber: 31,
+  githubStatus: "CURRENT",
+  issue: {
+    ...readyIssue,
+    body: "Goal v1",
+    updatedAt: "2026-08-19T15:09:52Z",
+  },
+  currentIssueBodySha256: "a".repeat(64),
+  engines: [{ id: "codex", adapter: "codex" }],
+  conversations: [
+    {
+      id: "conversation-1",
+      role: "discussion",
+      engineId: "codex",
+      runnerProjectBindingId: "binding-1",
+      vendorSessionEstablished: true,
+      status: "COMPLETED",
+      createdAt: "2026-08-19T15:10:00Z",
+      archivedAt: null,
+    },
+  ],
+  briefVersions: [
+    {
+      id: "brief-1",
+      content: "Adopt this development brief",
+      contentSha256: "b".repeat(64),
+      sourceIssueUpdatedAt: "2026-08-19T15:09:52Z",
+      sourceIssueBodySha256: "a".repeat(64),
+      status: "DRAFT",
+      createdAt: "2026-08-19T15:12:00Z",
+    },
+  ],
+  runs: [
+    {
+      id: "run-1",
+      conversationId: "conversation-1",
+      state: "COMPLETED",
+      queuedAt: "2026-08-19T15:11:00Z",
+      startedAt: "2026-08-19T15:11:01Z",
+      terminalAt: "2026-08-19T15:11:02Z",
+      terminalDetail: { result: "Agent answer" },
+    },
+  ],
+  delivery: { activeTrack: null, baselines: [], deliveryPaused: false },
+  stopConditions: [],
+  blockedReasons: [],
+};
+
+function makeWorkflow(overrides: Partial<WorkflowClient> = {}): WorkflowClient {
+  return {
+    getWorkspace: vi.fn(async () => workspace),
+    establishBinding: vi.fn(async () => ({
+      id: "binding-1",
+      runnerId: "runner-1",
+      projectId: "qianshou",
+      mainCheckoutPath: "/work/qianshou",
+      repositoryIdAtBinding: 101,
+      createdAt: "2026-08-19T15:00:00Z",
+    })),
+    createConversation: vi.fn(async () => workspace.conversations[0]!),
+    startRun: vi.fn(async () => workspace.runs[0]!),
+    cancelRun: vi.fn(async () => ({
+      runId: "run-1",
+      issueNumber: 31,
+      cancellationRequested: true as const,
+    })),
+    listRunEvents: vi.fn(async () => ({ runId: "run-1", events: [], nextCursor: null })),
+    createBrief: vi.fn(async () => workspace.briefVersions[0]!),
+    adoptBaseline: vi.fn(async () => ({
+      id: "baseline-1",
+      trackId: "track-1",
+      sequence: 1,
+      adoptionKey: "adopt-1",
+      issueUpdatedAt: "2026-08-19T15:09:52Z",
+      issueBody: "Goal v1",
+      issueBodySha256: "a".repeat(64),
+      briefVersionId: "brief-1",
+      issueDoD: [],
+      payloadSha256: "c".repeat(64),
+      adoptedAt: "2026-08-19T15:13:00Z",
+    })),
+    resolveStop: vi.fn(),
+    ...overrides,
+  };
+}
+
+function renderApp(facts: FactsClient, workflow = makeWorkflow()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <App facts={facts} />
+      <App facts={facts} workflow={workflow} />
     </QueryClientProvider>,
   );
 }
+
+describe("Discussion and DeliveryBaseline workbench", () => {
+  it("keeps Discussion visible and requires explicit actions for runs, briefs, and adoption", async () => {
+    const facts = makeFacts();
+    const workflow = makeWorkflow();
+    const user = userEvent.setup();
+    renderApp(facts, workflow);
+
+    await chooseProject(user, "qianshou");
+    await user.type(screen.getByLabelText("Issue 编号"), "31");
+    await user.click(screen.getByRole("button", { name: "打开 Issue" }));
+
+    expect(await screen.findByRole("heading", { name: "Discussion 始终开放" })).toBeInTheDocument();
+    expect(screen.getByText("Adopt this development brief")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("本轮讨论"), "Continue with this question");
+    await user.click(screen.getByRole("button", { name: "继续对话" }));
+    expect(workflow.startRun).toHaveBeenCalledWith("qianshou", 31, "conversation-1", {
+      prompt: "Continue with this question",
+      idempotencyKey: expect.any(String),
+    });
+
+    await user.clear(screen.getByLabelText("开发说明"));
+    await user.type(screen.getByLabelText("开发说明"), "A newly frozen brief");
+    await user.click(screen.getByRole("button", { name: "冻结 BriefVersion" }));
+    expect(workflow.createBrief).toHaveBeenCalledWith(
+      "qianshou",
+      31,
+      expect.objectContaining({
+        content: "A newly frozen brief",
+        sourceConversationId: "conversation-1",
+        expectedIssueUpdatedAt: "2026-08-19T15:09:52Z",
+        expectedIssueBodySha256: "a".repeat(64),
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "采用为 DeliveryBaseline" }));
+    expect(workflow.adoptBaseline).toHaveBeenCalledWith(
+      "qianshou",
+      31,
+      expect.objectContaining({ briefVersionId: "brief-1", issueDoD: [] }),
+    );
+  });
+
+  it("can cancel the selected running Discussion run", async () => {
+    const runningWorkspace: IssueWorkspace = {
+      ...workspace,
+      runs: [
+        {
+          ...workspace.runs[0]!,
+          state: "RUNNING",
+          terminalAt: null,
+          terminalDetail: null,
+        },
+      ],
+    };
+    const workflow = makeWorkflow({
+      getWorkspace: vi.fn(async () => runningWorkspace),
+    });
+    const user = userEvent.setup();
+    renderApp(makeFacts(), workflow);
+
+    await chooseProject(user, "qianshou");
+    await user.type(screen.getByLabelText("Issue 编号"), "31");
+    await user.click(screen.getByRole("button", { name: "打开 Issue" }));
+
+    await user.click(await screen.findByRole("button", { name: "取消本轮运行" }));
+    expect(workflow.cancelRun).toHaveBeenCalledWith("qianshou", 31, "run-1");
+  });
+
+  it("keeps Discussion open while a Stop is paused and records the chosen one-shot outcome", async () => {
+    const pausedWorkspace: IssueWorkspace = {
+      ...workspace,
+      briefVersions: [{ ...workspace.briefVersions[0]!, status: "ADOPTED" }],
+      delivery: { ...workspace.delivery, deliveryPaused: true },
+      stopConditions: [
+        {
+          id: "stop-1",
+          trackId: "track-1",
+          baselineId: "baseline-1",
+          kind: "SCOPE_CHANGE",
+          reason: "GitHub Issue changed after adoption.",
+          evidence: { old: "a", current: "b" },
+          state: "OPEN",
+          createdAt: "2026-08-19T16:00:00Z",
+          resolution: null,
+          outcome: null,
+          resolvedAt: null,
+        },
+      ],
+    };
+    const workflow = makeWorkflow({
+      getWorkspace: vi.fn(async () => pausedWorkspace),
+      resolveStop: vi.fn(async () => ({
+        ...pausedWorkspace.stopConditions[0]!,
+        state: "RESOLVED" as const,
+        resolution: "ADOPT_NEW_BASELINE",
+        outcome: { note: "Adopt a new baseline." },
+        resolvedAt: "2026-08-19T16:01:00Z",
+      })),
+    });
+    const user = userEvent.setup();
+    renderApp(makeFacts(), workflow);
+
+    await chooseProject(user, "qianshou");
+    await user.type(screen.getByLabelText("Issue 编号"), "31");
+    await user.click(screen.getByRole("button", { name: "打开 Issue" }));
+
+    expect(await screen.findByRole("heading", { name: "Discussion 始终开放" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "采用为 DeliveryBaseline" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("处理结果"), "ADOPT_NEW_BASELINE");
+    expect(screen.getByRole("button", { name: "记录处理决定" })).toBeDisabled();
+    await user.type(
+      screen.getByLabelText("处理说明"),
+      "Adopt a new baseline after discussing changed scope.",
+    );
+    await user.click(screen.getByRole("button", { name: "记录处理决定" }));
+    expect(workflow.resolveStop).toHaveBeenCalledWith("qianshou", 31, "stop-1", {
+      resolution: "ADOPT_NEW_BASELINE",
+      outcome: { note: "Adopt a new baseline after discussing changed scope." },
+    });
+  });
+
+  it("can explicitly generate an immutable BriefVersion from the terminal Agent result", async () => {
+    const workflow = makeWorkflow();
+    const user = userEvent.setup();
+    renderApp(makeFacts(), workflow);
+
+    await chooseProject(user, "qianshou");
+    await user.type(screen.getByLabelText("Issue 编号"), "31");
+    await user.click(screen.getByRole("button", { name: "打开 Issue" }));
+
+    await user.click(await screen.findByRole("button", { name: "生成 BriefVersion" }));
+    expect(workflow.createBrief).toHaveBeenCalledWith(
+      "qianshou",
+      31,
+      expect.objectContaining({
+        content: "Agent answer",
+        sourceConversationId: "conversation-1",
+        expectedIssueUpdatedAt: "2026-08-19T15:09:52Z",
+        expectedIssueBodySha256: "a".repeat(64),
+      }),
+    );
+  });
+});
 
 async function chooseProject(user: ReturnType<typeof userEvent.setup>, projectId: string) {
   await screen.findByRole("option", { name: new RegExp(`^${projectId} ·`) });

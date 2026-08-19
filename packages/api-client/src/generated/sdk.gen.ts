@@ -9,14 +9,35 @@ import type {
   TDataShape,
 } from "./client/index.js";
 import type {
+  AdoptDeliveryBaselineData,
+  AdoptDeliveryBaselineErrors,
+  AdoptDeliveryBaselineResponses,
+  CancelDiscussionRunData,
+  CancelDiscussionRunErrors,
+  CancelDiscussionRunResponses,
+  CreateBriefVersionData,
+  CreateBriefVersionErrors,
+  CreateBriefVersionResponses,
+  CreateDiscussionConversationData,
+  CreateDiscussionConversationErrors,
+  CreateDiscussionConversationResponses,
   CreateProjectData,
   CreateProjectErrors,
   CreateProjectResponses,
+  EstablishRunnerBindingData,
+  EstablishRunnerBindingErrors,
+  EstablishRunnerBindingResponses,
   GetHealthData,
   GetHealthResponses,
+  GetIssueWorkspaceData,
+  GetIssueWorkspaceErrors,
+  GetIssueWorkspaceResponses,
   GetProjectIssueData,
   GetProjectIssueErrors,
   GetProjectIssueResponses,
+  ListDiscussionRunEventsData,
+  ListDiscussionRunEventsErrors,
+  ListDiscussionRunEventsResponses,
   ListMilestoneIssuesData,
   ListMilestoneIssuesErrors,
   ListMilestoneIssuesResponses,
@@ -25,6 +46,12 @@ import type {
   ListProjectMilestonesResponses,
   ListProjectsData,
   ListProjectsResponses,
+  ResolveStopConditionData,
+  ResolveStopConditionErrors,
+  ResolveStopConditionResponses,
+  StartDiscussionRunData,
+  StartDiscussionRunErrors,
+  StartDiscussionRunResponses,
 } from "./types.gen.js";
 
 export type Options<
@@ -115,4 +142,156 @@ export const getProjectIssue = <ThrowOnError extends boolean = false>(
   (options.client ?? client).get<GetProjectIssueResponses, GetProjectIssueErrors, ThrowOnError>({
     url: "/api/v1/projects/{projectId}/issues/{issueNumber}",
     ...options,
+  });
+
+/**
+ * Explicitly validate and bind this Runner to the Project main checkout
+ */
+export const establishRunnerBinding = <ThrowOnError extends boolean = false>(
+  options: Options<EstablishRunnerBindingData, ThrowOnError>,
+): RequestResult<EstablishRunnerBindingResponses, EstablishRunnerBindingErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    EstablishRunnerBindingResponses,
+    EstablishRunnerBindingErrors,
+    ThrowOnError
+  >({
+    url: "/api/v1/projects/{projectId}/runner-binding",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Read durable Discussion artifacts and reconcile current GitHub scope evidence
+ */
+export const getIssueWorkspace = <ThrowOnError extends boolean = false>(
+  options: Options<GetIssueWorkspaceData, ThrowOnError>,
+): RequestResult<GetIssueWorkspaceResponses, GetIssueWorkspaceErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetIssueWorkspaceResponses, GetIssueWorkspaceErrors, ThrowOnError>(
+    { url: "/api/v1/projects/{projectId}/issues/{issueNumber}/workspace", ...options },
+  );
+
+/**
+ * Create one immutable-engine Discussion conversation after explicit user action
+ */
+export const createDiscussionConversation = <ThrowOnError extends boolean = false>(
+  options: Options<CreateDiscussionConversationData, ThrowOnError>,
+): RequestResult<
+  CreateDiscussionConversationResponses,
+  CreateDiscussionConversationErrors,
+  ThrowOnError
+> =>
+  (options.client ?? client).post<
+    CreateDiscussionConversationResponses,
+    CreateDiscussionConversationErrors,
+    ThrowOnError
+  >({
+    url: "/api/v1/projects/{projectId}/issues/{issueNumber}/conversations",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Explicitly start or continue one Discussion Agent turn
+ */
+export const startDiscussionRun = <ThrowOnError extends boolean = false>(
+  options: Options<StartDiscussionRunData, ThrowOnError>,
+): RequestResult<StartDiscussionRunResponses, StartDiscussionRunErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    StartDiscussionRunResponses,
+    StartDiscussionRunErrors,
+    ThrowOnError
+  >({
+    url: "/api/v1/projects/{projectId}/issues/{issueNumber}/conversations/{conversationId}/runs",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Explicitly request cancellation of a currently owned Agent process
+ */
+export const cancelDiscussionRun = <ThrowOnError extends boolean = false>(
+  options: Options<CancelDiscussionRunData, ThrowOnError>,
+): RequestResult<CancelDiscussionRunResponses, CancelDiscussionRunErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    CancelDiscussionRunResponses,
+    CancelDiscussionRunErrors,
+    ThrowOnError
+  >({ url: "/api/v1/projects/{projectId}/issues/{issueNumber}/runs/{runId}/cancel", ...options });
+
+/**
+ * Page normalized run events by an exclusive sequence cursor
+ */
+export const listDiscussionRunEvents = <ThrowOnError extends boolean = false>(
+  options: Options<ListDiscussionRunEventsData, ThrowOnError>,
+): RequestResult<ListDiscussionRunEventsResponses, ListDiscussionRunEventsErrors, ThrowOnError> =>
+  (options.client ?? client).get<
+    ListDiscussionRunEventsResponses,
+    ListDiscussionRunEventsErrors,
+    ThrowOnError
+  >({ url: "/api/v1/projects/{projectId}/issues/{issueNumber}/runs/{runId}/events", ...options });
+
+/**
+ * Freeze an immutable development brief against current Issue evidence
+ */
+export const createBriefVersion = <ThrowOnError extends boolean = false>(
+  options: Options<CreateBriefVersionData, ThrowOnError>,
+): RequestResult<CreateBriefVersionResponses, CreateBriefVersionErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    CreateBriefVersionResponses,
+    CreateBriefVersionErrors,
+    ThrowOnError
+  >({
+    url: "/api/v1/projects/{projectId}/issues/{issueNumber}/briefs",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Explicitly adopt one BriefVersion and freeze current GitHub Issue evidence
+ */
+export const adoptDeliveryBaseline = <ThrowOnError extends boolean = false>(
+  options: Options<AdoptDeliveryBaselineData, ThrowOnError>,
+): RequestResult<AdoptDeliveryBaselineResponses, AdoptDeliveryBaselineErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    AdoptDeliveryBaselineResponses,
+    AdoptDeliveryBaselineErrors,
+    ThrowOnError
+  >({
+    url: "/api/v1/projects/{projectId}/issues/{issueNumber}/adoptions",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Record one explicit decision and outcome for a StopCondition
+ */
+export const resolveStopCondition = <ThrowOnError extends boolean = false>(
+  options: Options<ResolveStopConditionData, ThrowOnError>,
+): RequestResult<ResolveStopConditionResponses, ResolveStopConditionErrors, ThrowOnError> =>
+  (options.client ?? client).post<
+    ResolveStopConditionResponses,
+    ResolveStopConditionErrors,
+    ThrowOnError
+  >({
+    url: "/api/v1/projects/{projectId}/issues/{issueNumber}/stops/{stopId}/resolve",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });

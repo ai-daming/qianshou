@@ -238,6 +238,7 @@ func seedThroughBrief(t *testing.T, store *Store) testSeed {
 	}
 	brief, err := store.CreateBriefVersion(ctx, NewBriefVersion{
 		ID: "brief-1", ProjectID: project.ID, IssueNumber: issueNumber, Content: "adopted brief",
+		SourceIssueUpdatedAt: "2026-08-19T00:00:00Z", SourceIssueBodySHA256: sha256Text("frozen"),
 	})
 	if err != nil {
 		t.Fatal(err)

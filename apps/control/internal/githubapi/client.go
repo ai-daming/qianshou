@@ -58,6 +58,8 @@ type Issue struct {
 	Title      string     `json:"title"`
 	State      string     `json:"state"`
 	Labels     []string   `json:"labels"`
+	Body       string     `json:"body,omitempty"`
+	UpdatedAt  string     `json:"updatedAt,omitempty"`
 	Dependency Dependency `json:"dependency"`
 }
 
@@ -284,6 +286,8 @@ func (c *Client) decodeIssue(body []byte, repo string, expectedMilestone int) (I
 		Number        *int    `json:"number"`
 		Title         *string `json:"title"`
 		State         *string `json:"state"`
+		Body          *string `json:"body"`
+		UpdatedAt     *string `json:"updated_at"`
 		Labels        *[]struct {
 			Name *string `json:"name"`
 		} `json:"labels"`
@@ -309,6 +313,12 @@ func (c *Client) decodeIssue(body []byte, repo string, expectedMilestone int) (I
 		return Issue{}, false, fmt.Errorf("Issue state is not understood")
 	}
 	issue := Issue{Number: *raw.Number, Title: *raw.Title, State: state, Labels: make([]string, 0, len(*raw.Labels))}
+	if raw.Body != nil {
+		issue.Body = *raw.Body
+	}
+	if raw.UpdatedAt != nil {
+		issue.UpdatedAt = *raw.UpdatedAt
+	}
 	seen := make(map[string]struct{}, len(*raw.Labels))
 	for _, label := range *raw.Labels {
 		if label.Name == nil || strings.TrimSpace(*label.Name) == "" {

@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
 import { generatedFactsClient } from "./facts.js";
+import { generatedWorkflowClient } from "./workflow.js";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -21,7 +22,7 @@ if (!root) throw new Error("Missing #root element");
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App facts={generatedFactsClient} />
+      <App facts={generatedFactsClient} workflow={generatedWorkflowClient} />
     </QueryClientProvider>
   </StrictMode>,
 );

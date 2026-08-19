@@ -7,12 +7,12 @@
   "engines": [
     {
       "id": "codex",
-      "adapter": "codex-cli",
+      "adapter": "codex",
       "command": "codex"
     },
     {
       "id": "claude-code",
-      "adapter": "claude-code-cli",
+      "adapter": "claude",
       "command": "claude"
     }
   ]

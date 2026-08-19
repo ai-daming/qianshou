@@ -18,11 +18,23 @@ type migration struct {
 }
 
 func migrations() []migration {
-	sql, err := migrationFiles.ReadFile("migrations/001_initial.sql")
-	if err != nil {
-		panic(fmt.Sprintf("embedded migration missing: %v", err))
+	definitions := []struct {
+		version int
+		name    string
+		path    string
+	}{
+		{version: 1, name: "initial", path: "migrations/001_initial.sql"},
+		{version: 2, name: "brief_issue_evidence", path: "migrations/002_brief_issue_evidence.sql"},
 	}
-	return []migration{{Version: 1, Name: "initial", SQL: string(sql)}}
+	result := make([]migration, 0, len(definitions))
+	for _, definition := range definitions {
+		sql, err := migrationFiles.ReadFile(definition.path)
+		if err != nil {
+			panic(fmt.Sprintf("embedded migration missing: %v", err))
+		}
+		result = append(result, migration{Version: definition.version, Name: definition.name, SQL: string(sql)})
+	}
+	return result
 }
 
 func validateMigrations(all []migration) error {

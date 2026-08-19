@@ -68,19 +68,23 @@ type NewRunnerProjectBinding struct {
 }
 
 type BriefVersion struct {
-	ID            string
-	ProjectID     string
-	IssueNumber   int
-	Content       string
-	ContentSHA256 string
-	CreatedAt     string
+	ID                    string
+	ProjectID             string
+	IssueNumber           int
+	Content               string
+	ContentSHA256         string
+	SourceIssueUpdatedAt  string
+	SourceIssueBodySHA256 string
+	CreatedAt             string
 }
 
 type NewBriefVersion struct {
-	ID          string
-	ProjectID   string
-	IssueNumber int
-	Content     string
+	ID                    string
+	ProjectID             string
+	IssueNumber           int
+	Content               string
+	SourceIssueUpdatedAt  string
+	SourceIssueBodySHA256 string
 }
 
 type DeliveryTrack struct {

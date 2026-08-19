@@ -1,14 +1,12 @@
-// Package dod implements the Criterion structure and Definition of Done
-// composition defined by docs/architecture/issue-types-goals-and-
-// definition-of-done.md.
+// Package dod implements the Issue Criterion structure defined by
+// docs/architecture/issue-types-goals-and-definition-of-done.md.
 //
 // Every Acceptance Criterion and DoD item is a structured Criterion with the
-// five contract fields. The effective Definition of Done is composed, never
-// copied: Resolved DoD = versioned Project default DoD + Issue-specific DoD.
-// All validation fails closed and reports every determinable problem; an
-// agent must not mark a human or external criterion complete merely because
-// code or tests pass — that boundary lives in the callers, this package only
-// models the contract.
+// five contract fields. There is deliberately no ProjectDoD or policy
+// composition model: durable repository instructions are read from AGENTS.md
+// at the Git SHA being acted on, while delivery-specific DoD belongs to the
+// Issue and the adopted DeliveryBaseline. All validation fails closed and
+// reports every determinable problem.
 //
 // Freezing a resolved DoD into a DeliveryBaseline is M1-05 scope; this
 // package deliberately exposes no freeze semantics.
@@ -52,33 +50,6 @@ type Criterion struct {
 	Required           bool               `json:"required"`
 }
 
-// Source distinguishes where a resolved criterion came from.
-type Source string
-
-const (
-	SourceProject Source = "PROJECT"
-	SourceIssue   Source = "ISSUE"
-)
-
-// ProjectDoD is the repository-wide default DoD with an explicit version.
-type ProjectDoD struct {
-	Version  string      `json:"version"`
-	Criteria []Criterion `json:"criteria"`
-}
-
-// ResolvedCriterion is one criterion in the composed DoD, with its origin.
-type ResolvedCriterion struct {
-	Criterion Criterion
-	Source    Source
-}
-
-// ResolvedDoD is the composed DoD: versioned project default plus
-// issue-specific criteria, each labelled with its source.
-type ResolvedDoD struct {
-	ProjectDoDVersion string
-	Criteria          []ResolvedCriterion
-}
-
 // criterionJSON is the wire shape of a Criterion. Required is a pointer so
 // the JSON boundaries can distinguish an explicit false from a missing or
 // null flag. Plain struct decoding never routes through Criterion's custom
@@ -92,9 +63,9 @@ type criterionJSON struct {
 }
 
 // UnmarshalJSON enforces required-flag presence on every JSON path — direct
-// Criterion decoding, nested ProjectDoD decoding, and any future storage
-// decoding — so a missing or null required can never silently degrade a
-// criterion to waivable. An explicit false is valid.
+// Criterion decoding and any future storage decoding — so a missing or null
+// required can never silently degrade a criterion to waivable. An explicit
+// false is valid.
 func (c *Criterion) UnmarshalJSON(data []byte) error {
 	var raw criterionJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -171,25 +142,9 @@ func (c Criterion) Problems() []string {
 	return problems
 }
 
-// Problems reports every defect of the project default: missing version,
-// per-criterion field problems, and duplicate criterion ids.
-func (p ProjectDoD) Problems() []string {
-	var problems []string
-	if strings.TrimSpace(p.Version) == "" {
-		problems = append(problems, "project DoD version 不能为空")
-	}
-	seen := make(map[string]bool)
-	for _, criterion := range p.Criteria {
-		problems = append(problems, criterion.Problems()...)
-		if seen[criterion.ID] {
-			problems = append(problems, fmt.Sprintf("project criterion id 重复：%s", criterion.ID))
-		}
-		seen[criterion.ID] = true
-	}
-	return problems
-}
-
-func issueProblems(criteria []Criterion) []string {
+// ValidateIssueCriteria reports every defect in one Issue-owned criteria
+// list. Criteria are not merged with repository defaults or policy records.
+func ValidateIssueCriteria(criteria []Criterion) []string {
 	var problems []string
 	seen := make(map[string]bool)
 	for _, criterion := range criteria {
@@ -200,27 +155,4 @@ func issueProblems(criteria []Criterion) []string {
 		seen[criterion.ID] = true
 	}
 	return problems
-}
-
-// Resolve composes the effective DoD from the versioned project default and
-// the issue-specific criteria. Project criteria come first, issue criteria
-// after, each labelled with its source, and the project version is carried
-// onto the result. Criterion ids must be unique within each side but may be
-// reused across sides: the (Source, ID) pair identifies a resolved criterion.
-// It fails closed: any problem in either side yields an empty resolution
-// plus every problem.
-func Resolve(project ProjectDoD, issue []Criterion) (ResolvedDoD, []string) {
-	problems := append(project.Problems(), issueProblems(issue)...)
-	if len(problems) > 0 {
-		return ResolvedDoD{}, problems
-	}
-
-	resolved := ResolvedDoD{ProjectDoDVersion: project.Version}
-	for _, criterion := range project.Criteria {
-		resolved.Criteria = append(resolved.Criteria, ResolvedCriterion{Criterion: criterion, Source: SourceProject})
-	}
-	for _, criterion := range issue {
-		resolved.Criteria = append(resolved.Criteria, ResolvedCriterion{Criterion: criterion, Source: SourceIssue})
-	}
-	return resolved, nil
 }

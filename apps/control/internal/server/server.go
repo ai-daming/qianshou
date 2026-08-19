@@ -20,6 +20,7 @@ import (
 	"github.com/ai-daming/qianshou/apps/control/internal/deps"
 	"github.com/ai-daming/qianshou/apps/control/internal/githubapi"
 	"github.com/ai-daming/qianshou/apps/control/internal/ledger"
+	"github.com/ai-daming/qianshou/apps/control/internal/localrunner"
 	"github.com/ai-daming/qianshou/apps/control/internal/strictjson"
 )
 
@@ -45,7 +46,8 @@ func Serve(args []string) error {
 	if err := validateListenAddress(*addr); err != nil {
 		return err
 	}
-	if _, err := config.Load(*configPath); err != nil {
+	cfg, err := config.Load(*configPath)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -66,7 +68,9 @@ func Serve(args []string) error {
 	defer listener.Close()
 	// Loopback only. Remote operation arrives with M2-05 behind
 	// authentication and TLS; that boundary is deliberate.
-	server := newHTTPServer(handler(store, githubapi.New(token)))
+	runtimeContext, stopRuntime := context.WithCancel(context.Background())
+	defer stopRuntime()
+	server := newHTTPServer(handlerWithWorkflow(store, githubapi.New(token), cfg, localrunner.NewCLIExecutor(), runtimeContext))
 	return server.Serve(listener)
 }
 
@@ -98,6 +102,10 @@ func handler(catalog projectCatalog, facts factsReader) http.Handler {
 }
 
 func handlerWithFactsTimeout(catalog projectCatalog, facts factsReader, factsTimeout time.Duration) http.Handler {
+	return handlerWithFactsTimeoutAndWorkflow(catalog, facts, factsTimeout, nil)
+}
+
+func handlerWithFactsTimeoutAndWorkflow(catalog projectCatalog, facts factsReader, factsTimeout time.Duration, workflow *workflowRuntime) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -211,6 +219,7 @@ func handlerWithFactsTimeout(catalog projectCatalog, facts factsReader, factsTim
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"projectId": project.ID, "issue": issue})
 	})
+	registerWorkflowRoutes(mux, workflow)
 	return mux
 }
 

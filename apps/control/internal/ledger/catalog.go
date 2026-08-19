@@ -175,26 +175,33 @@ func (s *Store) CreateBriefVersion(ctx context.Context, input NewBriefVersion) (
 	if err := validateID("brief version id", input.ID); err != nil {
 		return BriefVersion{}, err
 	}
-	if strings.TrimSpace(input.Content) == "" || input.IssueNumber <= 0 {
-		return BriefVersion{}, fmt.Errorf("brief content or work item is invalid: %w", ErrInvariant)
+	if strings.TrimSpace(input.Content) == "" || input.IssueNumber <= 0 || strings.TrimSpace(input.SourceIssueUpdatedAt) == "" ||
+		len(input.SourceIssueBodySHA256) != 64 {
+		return BriefVersion{}, fmt.Errorf("brief content or source Issue evidence is invalid: %w", ErrInvariant)
 	}
 	hash := sha256Text(input.Content)
 	createdAt := nowText()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO brief_versions(
-		brief_version_id, project_id, issue_number, content, content_sha256, created_at
-	) VALUES(?, ?, ?, ?, ?, ?)`, input.ID, input.ProjectID, input.IssueNumber, input.Content, hash, createdAt)
+		brief_version_id, project_id, issue_number, content, content_sha256, issue_updated_at, issue_body_sha256, created_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, input.ID, input.ProjectID, input.IssueNumber, input.Content, hash,
+		input.SourceIssueUpdatedAt, strings.ToLower(input.SourceIssueBodySHA256), createdAt)
 	if err == nil {
 		return BriefVersion{ID: input.ID, ProjectID: input.ProjectID, IssueNumber: input.IssueNumber,
-			Content: input.Content, ContentSHA256: hash, CreatedAt: createdAt}, nil
+			Content: input.Content, ContentSHA256: hash, SourceIssueUpdatedAt: input.SourceIssueUpdatedAt,
+			SourceIssueBodySHA256: strings.ToLower(input.SourceIssueBodySHA256), CreatedAt: createdAt}, nil
 	}
 	if !isSQLiteConstraint(err) {
 		return BriefVersion{}, classifySQLiteWriteError(err, "create brief version", "brief version conflicts")
 	}
 	var existing BriefVersion
-	getErr := s.db.QueryRowContext(ctx, `SELECT brief_version_id, project_id, issue_number, content, content_sha256, created_at
+	getErr := s.db.QueryRowContext(ctx, `SELECT brief_version_id, project_id, issue_number, content, content_sha256,
+		COALESCE(issue_updated_at, ''), COALESCE(issue_body_sha256, ''), created_at
 		FROM brief_versions WHERE brief_version_id = ?`, input.ID).Scan(&existing.ID, &existing.ProjectID,
-		&existing.IssueNumber, &existing.Content, &existing.ContentSHA256, &existing.CreatedAt)
-	if getErr == nil && existing.ProjectID == input.ProjectID && existing.IssueNumber == input.IssueNumber && existing.ContentSHA256 == hash {
+		&existing.IssueNumber, &existing.Content, &existing.ContentSHA256, &existing.SourceIssueUpdatedAt,
+		&existing.SourceIssueBodySHA256, &existing.CreatedAt)
+	if getErr == nil && existing.ProjectID == input.ProjectID && existing.IssueNumber == input.IssueNumber &&
+		existing.ContentSHA256 == hash && existing.SourceIssueUpdatedAt == input.SourceIssueUpdatedAt &&
+		existing.SourceIssueBodySHA256 == strings.ToLower(input.SourceIssueBodySHA256) {
 		return existing, nil
 	}
 	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
