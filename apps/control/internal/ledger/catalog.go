@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,11 +22,17 @@ func (s *Store) CreateProject(ctx context.Context, input NewProject) (Project, e
 	if err == nil {
 		return Project{ID: input.ID, RepositoryID: input.RepositoryID, CreationSlug: input.CreationSlug, CreatedAt: createdAt}, nil
 	}
+	if !isSQLiteConstraint(err) {
+		return Project{}, classifySQLiteWriteError(err, "create project", "project identity conflicts")
+	}
 	existing, getErr := s.GetProject(ctx, input.ID)
 	if getErr == nil && existing.ArchivedAt == nil && existing.RepositoryID == input.RepositoryID && existing.CreationSlug == input.CreationSlug {
 		return existing, nil
 	}
-	return Project{}, conflict("project id or GitHub repository id is already owned")
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return Project{}, fmt.Errorf("read project after create conflict: %w", getErr)
+	}
+	return Project{}, classifySQLiteWriteError(err, "create project", "project id or GitHub repository id is already owned")
 }
 
 func (s *Store) GetProject(ctx context.Context, id string) (Project, error) {
@@ -74,13 +81,19 @@ func (s *Store) CreateRunner(ctx context.Context, input NewRunner) (Runner, erro
 	if err == nil {
 		return Runner{ID: input.ID, DisplayName: input.DisplayName, CreatedAt: createdAt}, nil
 	}
+	if !isSQLiteConstraint(err) {
+		return Runner{}, classifySQLiteWriteError(err, "create runner", "runner identity conflicts")
+	}
 	var existing Runner
 	getErr := s.db.QueryRowContext(ctx, `SELECT runner_id, display_name, created_at, retired_at FROM runners WHERE runner_id = ?`, input.ID).
 		Scan(&existing.ID, &existing.DisplayName, &existing.CreatedAt, &existing.RetiredAt)
 	if getErr == nil && existing.RetiredAt == nil && existing.DisplayName == input.DisplayName {
 		return existing, nil
 	}
-	return Runner{}, conflict("runner id is already owned")
+	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
+		return Runner{}, fmt.Errorf("read runner after create conflict: %w", getErr)
+	}
+	return Runner{}, classifySQLiteWriteError(err, "create runner", "runner id is already owned")
 }
 
 func (s *Store) UpdateRunnerDisplayName(ctx context.Context, runnerID, displayName string) error {
@@ -117,12 +130,18 @@ func (s *Store) CreateRunnerProjectBinding(ctx context.Context, input NewRunnerP
 		return RunnerProjectBinding{ID: input.ID, RunnerID: input.RunnerID, ProjectID: input.ProjectID,
 			MainCheckoutPath: input.MainCheckoutPath, RepositoryIDAtBinding: input.RepositoryIDAtBinding, CreatedAt: createdAt}, nil
 	}
+	if !isSQLiteConstraint(err) {
+		return RunnerProjectBinding{}, classifySQLiteWriteError(err, "create runner project binding", "runner project binding conflicts")
+	}
 	existing, getErr := getBinding(ctx, s.db, input.ID)
 	if getErr == nil && existing.RetiredAt == nil && existing.RunnerID == input.RunnerID && existing.ProjectID == input.ProjectID &&
 		existing.MainCheckoutPath == input.MainCheckoutPath && existing.RepositoryIDAtBinding == input.RepositoryIDAtBinding {
 		return existing, nil
 	}
-	return RunnerProjectBinding{}, conflict("runner project binding conflicts with an existing active binding")
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return RunnerProjectBinding{}, fmt.Errorf("read runner project binding after create conflict: %w", getErr)
+	}
+	return RunnerProjectBinding{}, classifySQLiteWriteError(err, "create runner project binding", "runner project binding conflicts with an existing active binding")
 }
 
 type rowQuerier interface {
@@ -147,7 +166,7 @@ func (s *Store) EnsureWorkItem(ctx context.Context, projectID string, issueNumbe
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO work_items(project_id, issue_number, created_at)
 		VALUES(?, ?, ?) ON CONFLICT(project_id, issue_number) DO NOTHING`, projectID, issueNumber, nowText()); err != nil {
-		return fmt.Errorf("ensure work item: %w", ErrInvariant)
+		return classifySQLiteWriteError(err, "ensure work item", "work item identity conflicts")
 	}
 	return nil
 }
@@ -168,6 +187,9 @@ func (s *Store) CreateBriefVersion(ctx context.Context, input NewBriefVersion) (
 		return BriefVersion{ID: input.ID, ProjectID: input.ProjectID, IssueNumber: input.IssueNumber,
 			Content: input.Content, ContentSHA256: hash, CreatedAt: createdAt}, nil
 	}
+	if !isSQLiteConstraint(err) {
+		return BriefVersion{}, classifySQLiteWriteError(err, "create brief version", "brief version conflicts")
+	}
 	var existing BriefVersion
 	getErr := s.db.QueryRowContext(ctx, `SELECT brief_version_id, project_id, issue_number, content, content_sha256, created_at
 		FROM brief_versions WHERE brief_version_id = ?`, input.ID).Scan(&existing.ID, &existing.ProjectID,
@@ -175,5 +197,8 @@ func (s *Store) CreateBriefVersion(ctx context.Context, input NewBriefVersion) (
 	if getErr == nil && existing.ProjectID == input.ProjectID && existing.IssueNumber == input.IssueNumber && existing.ContentSHA256 == hash {
 		return existing, nil
 	}
-	return BriefVersion{}, conflict("brief version id is already owned by different content")
+	if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
+		return BriefVersion{}, fmt.Errorf("read brief version after create conflict: %w", getErr)
+	}
+	return BriefVersion{}, classifySQLiteWriteError(err, "create brief version", "brief version id is already owned by different content")
 }

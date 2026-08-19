@@ -9,7 +9,7 @@ func (s *Store) ArchiveProject(ctx context.Context, projectID string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE projects SET archived_at = ?
 		WHERE project_id = ? AND archived_at IS NULL`, nowText(), projectID)
 	if err != nil {
-		return conflict("project has an active track or unfinished run")
+		return classifySQLiteWriteError(err, "archive project", "project has an active track or unfinished run")
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return conflict("project is missing or already archived")
@@ -21,7 +21,7 @@ func (s *Store) RetireRunner(ctx context.Context, runnerID string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE runners SET retired_at = ?
 		WHERE runner_id = ? AND retired_at IS NULL`, nowText(), runnerID)
 	if err != nil {
-		return conflict("runner has an unfinished run")
+		return classifySQLiteWriteError(err, "retire runner", "runner has an unfinished run")
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return conflict("runner is missing or already retired")
@@ -33,7 +33,7 @@ func (s *Store) RetireRunnerProjectBinding(ctx context.Context, bindingID string
 	result, err := s.db.ExecContext(ctx, `UPDATE runner_project_bindings SET retired_at = ?
 		WHERE binding_id = ? AND retired_at IS NULL`, nowText(), bindingID)
 	if err != nil {
-		return conflict("binding is used by an active track")
+		return classifySQLiteWriteError(err, "retire runner project binding", "binding is used by an active track")
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return conflict("binding is missing or already retired")

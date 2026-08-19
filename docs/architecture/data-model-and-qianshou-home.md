@@ -98,7 +98,7 @@ A Conversation freezes WorkItem, Role, Engine, and Runner Project binding. Its V
 
 ## Runs, frames, and events
 
-Creating an AgentRun first persists `QUEUED` with a command key and hash. The Runner starts the real process idempotently and only then records `started_at`. Terminal kind, time, and detail are written together and once. On M1 Server restart, an unrecoverable `RUNNING` process becomes `INTERRUPTED`; a `QUEUED` run is never auto-started.
+Creating an AgentRun first persists `QUEUED` with a command key and hash. The Runner starts the real process idempotently and only then records `started_at`. Terminal kind, time, and detail are written together and once. On M1 Server restart, every unfinished Run becomes `INTERRUPTED`: an unrecoverable `RUNNING` process records that it had started, while a `QUEUED` Run retains `started_at = null` and records that it never started. A queued command is never auto-started after restart, and its terminal row no longer blocks a replacement Run for the Conversation.
 
 Frame and event sequences start at 1 and are strict and contiguous per Run. A duplicate key with identical normalized content is an idempotent retry; a changed duplicate, gap, or out-of-order append fails. One raw frame maps to zero through many events:
 

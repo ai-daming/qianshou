@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -80,12 +81,18 @@ func (s *Store) QueueRun(ctx context.Context, input NewAgentRun) (AgentRun, erro
 		}
 		return result, nil
 	}
+	if !isSQLiteConstraint(insertErr) {
+		return AgentRun{}, classifySQLiteWriteError(insertErr, "queue run", "run conflicts")
+	}
 	existing, getErr := getRunByCommandKey(ctx, s.db, input.CommandKey)
 	if getErr == nil && existing.ID == input.ID && existing.ConversationID == input.ConversationID &&
 		pointerText(existing.TrackID) == input.TrackID && pointerText(existing.BaselineID) == input.BaselineID && existing.CommandHash == hash {
 		return existing, nil
 	}
-	return AgentRun{}, conflict("command key, run identity, unfinished conversation, or baseline conflicts")
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return AgentRun{}, fmt.Errorf("read run after queue conflict: %w", getErr)
+	}
+	return AgentRun{}, classifySQLiteWriteError(insertErr, "queue run", "command key, run identity, unfinished conversation, or baseline conflicts")
 }
 
 func (s *Store) GetRun(ctx context.Context, id string) (AgentRun, error) {
@@ -164,9 +171,11 @@ func (s *Store) FinishRun(ctx context.Context, id string, terminal RunState, det
 }
 
 func (s *Store) interruptOrphanedRuns(ctx context.Context) error {
-	detail := `{"reason":"server restarted and the M1 in-process runner cannot be reattached"}`
-	_, err := s.db.ExecContext(ctx, `UPDATE agent_runs SET terminal_kind = 'INTERRUPTED', terminal_at = ?, terminal_detail_json = ?
-		WHERE started_at IS NOT NULL AND terminal_kind IS NULL`, nowText(), detail)
+	runningDetail := `{"reason":"server restarted and the M1 in-process runner cannot be reattached","started":true}`
+	queuedDetail := `{"reason":"server restarted before the M1 in-process runner started this command","started":false}`
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_runs SET terminal_kind = 'INTERRUPTED', terminal_at = ?,
+		terminal_detail_json = CASE WHEN started_at IS NULL THEN ? ELSE ? END
+		WHERE terminal_kind IS NULL`, nowText(), queuedDetail, runningDetail)
 	if err != nil {
 		return fmt.Errorf("interrupt orphaned runs: %w", err)
 	}

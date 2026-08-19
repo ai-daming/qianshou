@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -54,11 +55,17 @@ func (s *Store) OpenStopCondition(ctx context.Context, input NewStopCondition) (
 	if insertErr == nil {
 		return value, nil
 	}
+	if !isSQLiteConstraint(insertErr) {
+		return StopCondition{}, classifySQLiteWriteError(insertErr, "open stop condition", "stop condition evidence conflicts")
+	}
 	existing, getErr := getStop(ctx, s.db, input.ID)
 	if getErr == nil && existing.PayloadSHA256 == value.PayloadSHA256 {
 		return existing, nil
 	}
-	return StopCondition{}, conflict("stop condition id is already owned by different evidence")
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return StopCondition{}, fmt.Errorf("read stop condition after create conflict: %w", getErr)
+	}
+	return StopCondition{}, classifySQLiteWriteError(insertErr, "open stop condition", "stop condition id is already owned by different evidence")
 }
 
 func (s *Store) ResolveStopCondition(ctx context.Context, id, resolution, outcomeJSON string) (StopCondition, error) {

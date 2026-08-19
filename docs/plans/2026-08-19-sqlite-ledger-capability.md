@@ -101,7 +101,7 @@ The frozen TypeScript prototype remains an executable comparison artifact. It mu
 - Create/modify: relevant integration tests
 
 1. Open/migrate/verify SQLite before the HTTP listener can serve writes.
-2. On restart, leave QUEUED Runs queued and atomically mark unrecoverable M1 RUNNING Runs INTERRUPTED.
+2. On restart, atomically mark every unfinished Run `INTERRUPTED`; preserve `started_at = null` and explicit never-started detail for QUEUED Runs, and never auto-start a queued command.
 3. Keep the in-process Runner behind the same structured command boundary used by ledger Run creation; do not add the M2 remote protocol, auth, or TLS.
 4. Verify server loopback enforcement and that Runner never opens SQLite.
 

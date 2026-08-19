@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -77,27 +78,26 @@ func (s *Store) AppendSyntheticEvent(ctx context.Context, input NewRunEvent, run
 		return err
 	}
 	event := prepared[0]
-	var existing RunEvent
-	err = s.db.QueryRowContext(ctx, `SELECT run_id, sequence, source_frame_sequence, event_kind,
-		payload_json, payload_sha256, occurred_at FROM run_events WHERE run_id = ? AND sequence = ?`, runID, input.Sequence).
-		Scan(&existing.RunID, &existing.Sequence, &existing.SourceFrameSequence, &existing.Kind,
-			&existing.PayloadJSON, &existing.PayloadSHA256, &existing.OccurredAt)
-	if err == nil {
+	_, insertErr := s.db.ExecContext(ctx, `INSERT INTO run_events(run_id, sequence, source_frame_sequence, event_kind,
+		payload_json, payload_sha256, occurred_at) VALUES(?, ?, NULL, ?, ?, ?, ?)`, runID, event.Sequence,
+		event.Kind, event.PayloadJSON, event.PayloadSHA256, nowText())
+	if insertErr == nil {
+		return s.secureFiles()
+	}
+	if !isSQLiteConstraint(insertErr) {
+		return classifySQLiteWriteError(insertErr, "append synthetic event", "synthetic event conflicts")
+	}
+	existing, getErr := getRunEvent(ctx, s.db, runID, input.Sequence)
+	if getErr == nil {
 		if existing.SourceFrameSequence == nil && existing.Kind == event.Kind && existing.PayloadSHA256 == event.PayloadSHA256 {
 			return nil
 		}
-		return conflict("synthetic event sequence was reused with different content")
+		return classifySQLiteWriteError(insertErr, "append synthetic event", "synthetic event sequence was reused with different content")
 	}
-	if err != sql.ErrNoRows {
-		return err
+	if !errors.Is(getErr, ErrNotFound) {
+		return fmt.Errorf("read synthetic event after insert conflict: %w", getErr)
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO run_events(run_id, sequence, source_frame_sequence, event_kind,
-		payload_json, payload_sha256, occurred_at) VALUES(?, ?, NULL, ?, ?, ?, ?)`, runID, event.Sequence,
-		event.Kind, event.PayloadJSON, event.PayloadSHA256, nowText())
-	if err != nil {
-		return conflict("synthetic event sequence is not the next contiguous event")
-	}
-	return s.secureFiles()
+	return classifySQLiteWriteError(insertErr, "append synthetic event", "synthetic event sequence is not the next contiguous event")
 }
 
 func (s *Store) AppendVendorFrame(ctx context.Context, input NewVendorFrame, events []NewRunEvent) error {
@@ -144,6 +144,8 @@ func (s *Store) AppendVendorFrame(ctx context.Context, input NewVendorFrame, eve
 			return conflict("vendor frame retry has different normalized events")
 		}
 		return nil
+	} else if !errors.Is(getErr, ErrNotFound) {
+		return fmt.Errorf("read existing vendor frame: %w", getErr)
 	}
 	var parseError any
 	if input.ParseError != "" {
@@ -154,20 +156,32 @@ func (s *Store) AppendVendorFrame(ctx context.Context, input NewVendorFrame, eve
 		input.RunID, input.Sequence, input.RawPayload, frameHash, input.Channel, nowText(), input.ParseStatus,
 		input.NormalizerVersion, parseError)
 	if err != nil {
-		return conflict("vendor frame sequence is not the next contiguous frame")
+		return classifySQLiteWriteError(err, "append vendor frame", "vendor frame sequence is not the next contiguous frame")
 	}
 	for _, event := range prepared {
 		_, err := tx.ExecContext(ctx, `INSERT INTO run_events(run_id, sequence, source_frame_sequence, event_kind,
 			payload_json, payload_sha256, occurred_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, input.RunID, event.Sequence,
 			input.Sequence, event.Kind, event.PayloadJSON, event.PayloadSHA256, nowText())
 		if err != nil {
-			return conflict("run event sequence is not the next contiguous event")
+			return classifySQLiteWriteError(err, "append normalized run event", "run event sequence is not the next contiguous event")
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit vendor frame: %w", err)
 	}
 	return s.secureFiles()
+}
+
+func getRunEvent(ctx context.Context, query rowQuerier, runID string, sequence int) (RunEvent, error) {
+	var event RunEvent
+	err := query.QueryRowContext(ctx, `SELECT run_id, sequence, source_frame_sequence, event_kind,
+		payload_json, payload_sha256, occurred_at FROM run_events WHERE run_id = ? AND sequence = ?`, runID, sequence).
+		Scan(&event.RunID, &event.Sequence, &event.SourceFrameSequence, &event.Kind,
+			&event.PayloadJSON, &event.PayloadSHA256, &event.OccurredAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RunEvent{}, ErrNotFound
+	}
+	return event, err
 }
 
 func prepareEvents(runID string, source int, inputs []NewRunEvent) ([]RunEvent, error) {

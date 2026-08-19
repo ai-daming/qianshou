@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -123,7 +124,7 @@ func TestDeliveryRunRequiresMatchingBoundTrackAndConversationWorkItem(t *testing
 	}
 }
 
-func TestReopenInterruptsRunningButNeverStartsQueuedRun(t *testing.T) {
+func TestReopenInterruptsAllOrphanedRunsWithoutPretendingQueuedRunStarted(t *testing.T) {
 	home := t.TempDir() + "/home"
 	store, err := Open(context.Background(), home)
 	if err != nil {
@@ -164,8 +165,13 @@ func TestReopenInterruptsRunningButNeverStartsQueuedRun(t *testing.T) {
 	if running.State() != RunInterrupted {
 		t.Fatalf("orphan running state = %s", running.State())
 	}
-	if queued.State() != RunQueued || queued.StartedAt != nil {
-		t.Fatalf("queued run was started or changed: %+v", queued)
+	if queued.State() != RunInterrupted || queued.StartedAt != nil || queued.TerminalDetailJSON == nil ||
+		!strings.Contains(*queued.TerminalDetailJSON, `"started":false`) {
+		t.Fatalf("queued orphan did not retain never-started evidence: %+v", queued)
+	}
+	if _, err := reopened.QueueRun(context.Background(), NewAgentRun{ID: "replacement", ConversationID: conversation2.ID,
+		TrackID: seed.track.ID, BaselineID: seed.baseline.ID, CommandKey: "replacement", CommandJSON: `{}`}); err != nil {
+		t.Fatalf("interrupted queued orphan still blocks its conversation: %v", err)
 	}
 }
 

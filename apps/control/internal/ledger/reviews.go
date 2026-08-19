@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -64,11 +65,17 @@ func (s *Store) RecordReviewRound(ctx context.Context, input NewReviewRound) (Re
 	if insertErr == nil {
 		return value, nil
 	}
+	if !isSQLiteConstraint(insertErr) {
+		return ReviewRound{}, classifySQLiteWriteError(insertErr, "record review round", "review evidence conflicts")
+	}
 	existing, getErr := getReview(ctx, s.db, input.ID)
 	if getErr == nil && existing.PayloadSHA256 == value.PayloadSHA256 {
 		return existing, nil
 	}
-	return ReviewRound{}, conflict("review id or frozen baseline is conflicting or stale")
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return ReviewRound{}, fmt.Errorf("read review round after create conflict: %w", getErr)
+	}
+	return ReviewRound{}, classifySQLiteWriteError(insertErr, "record review round", "review id or frozen baseline is conflicting or stale")
 }
 
 func getReview(ctx context.Context, query rowQuerier, id string) (ReviewRound, error) {

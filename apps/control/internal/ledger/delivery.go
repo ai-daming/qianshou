@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -27,11 +28,13 @@ func (s *Store) StartTrack(ctx context.Context, trackInput NewTrack, baselineInp
 			return existing, existingBaseline, nil
 		}
 		return DeliveryTrack{}, DeliveryBaseline{}, conflict("track id is already owned by another track")
+	} else if !errors.Is(getErr, ErrNotFound) {
+		return DeliveryTrack{}, DeliveryBaseline{}, fmt.Errorf("read existing track: %w", getErr)
 	}
 	createdAt := nowText()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO delivery_tracks(track_id, project_id, issue_number, created_at)
 		VALUES(?, ?, ?, ?)`, trackInput.ID, trackInput.ProjectID, trackInput.IssueNumber, createdAt); err != nil {
-		return DeliveryTrack{}, DeliveryBaseline{}, conflict("work item already has an active track or track identity is invalid")
+		return DeliveryTrack{}, DeliveryBaseline{}, classifySQLiteWriteError(err, "start track", "work item already has an active track or track identity is invalid")
 	}
 	baseline.CreatedAt = createdAt
 	if err := insertBaseline(ctx, tx, baseline); err != nil {
@@ -58,6 +61,8 @@ func (s *Store) AppendBaseline(ctx context.Context, trackID string, input NewBas
 			return existing, nil
 		}
 		return DeliveryBaseline{}, conflict("baseline adoption key was reused with different evidence")
+	} else if !errors.Is(getErr, ErrNotFound) {
+		return DeliveryBaseline{}, fmt.Errorf("read existing baseline adoption: %w", getErr)
 	}
 	var next int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(max(sequence), 0) + 1 FROM delivery_baselines WHERE track_id = ?`, trackID).Scan(&next); err != nil {
@@ -108,7 +113,7 @@ func insertBaseline(ctx context.Context, tx *sql.Tx, baseline DeliveryBaseline) 
 		baseline.AdoptionKey, baseline.IssueUpdatedAt, baseline.IssueBody, baseline.IssueBodySHA256,
 		baseline.BriefVersionID, baseline.ResolvedDoDJSON, baseline.PayloadSHA256, baseline.CreatedAt)
 	if err != nil {
-		return conflict("baseline is not the next immutable snapshot for this active track")
+		return classifySQLiteWriteError(err, "insert baseline", "baseline is not the next immutable snapshot for this active track")
 	}
 	return nil
 }
@@ -179,7 +184,7 @@ func (s *Store) BindTrack(ctx context.Context, trackID string, binding TrackBind
 		branch = ?, base_branch = ?, base_sha_at_binding = ? WHERE track_id = ? AND runner_project_binding_id IS NULL`,
 		binding.RunnerProjectBindingID, binding.WorkspacePath, binding.Branch, binding.BaseBranch, binding.BaseSHA, trackID)
 	if err != nil {
-		return conflict("track binding does not match the project or is no longer active")
+		return classifySQLiteWriteError(err, "bind track", "track binding does not match the project or is no longer active")
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return conflict("track worktree binding changed concurrently")
@@ -202,12 +207,18 @@ func (s *Store) CreateConversation(ctx context.Context, input NewConversation) (
 		return Conversation{ID: input.ID, ProjectID: input.ProjectID, IssueNumber: input.IssueNumber, Role: input.Role,
 			EngineID: input.EngineID, RunnerProjectBindingID: input.RunnerProjectBindingID, CreatedAt: createdAt}, nil
 	}
+	if !isSQLiteConstraint(err) {
+		return Conversation{}, classifySQLiteWriteError(err, "create conversation", "conversation identity conflicts")
+	}
 	existing, getErr := getConversation(ctx, s.db, input.ID)
 	if getErr == nil && existing.ProjectID == input.ProjectID && existing.IssueNumber == input.IssueNumber &&
 		existing.Role == input.Role && existing.EngineID == input.EngineID && existing.RunnerProjectBindingID == input.RunnerProjectBindingID {
 		return existing, nil
 	}
-	return Conversation{}, conflict("conversation identity or affinity conflicts")
+	if getErr != nil && !errors.Is(getErr, ErrNotFound) {
+		return Conversation{}, fmt.Errorf("read conversation after create conflict: %w", getErr)
+	}
+	return Conversation{}, classifySQLiteWriteError(err, "create conversation", "conversation identity or affinity conflicts")
 }
 
 func getConversation(ctx context.Context, query rowQuerier, id string) (Conversation, error) {

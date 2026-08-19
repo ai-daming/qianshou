@@ -76,6 +76,34 @@ func TestConcurrentCommandKeyRetryIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestConcurrentSyntheticEventRetryIsIdempotent(t *testing.T) {
+	store, run := seedRunningRun(t)
+	input := NewRunEvent{Sequence: 1, Kind: EventStatus, PayloadJSON: `{"status":"queued"}`}
+	start := make(chan struct{})
+	errs := make(chan error, 32)
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- store.AppendSyntheticEvent(context.Background(), input, run.ID)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("identical concurrent synthetic event retry failed: %v", err)
+		}
+	}
+	page, err := store.ListRunEvents(context.Background(), run.ID, 0, 10)
+	if err != nil || len(page.Events) != 1 {
+		t.Fatalf("stored synthetic events = %+v, %v", page.Events, err)
+	}
+}
+
 func TestConcurrentFrameSequenceConflictCannotCreateGap(t *testing.T) {
 	store, run := seedRunningRun(t)
 	start := make(chan struct{})
