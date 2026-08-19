@@ -2,15 +2,19 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ai-daming/qianshou/apps/control/internal/strictjson"
 )
+
+const gitCommandTimeout = 5 * time.Second
 
 var (
 	idPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -136,11 +140,17 @@ func (cfg Config) validate() error {
 }
 
 func verifyMainCheckout(path, wantSlug string) error {
+	return verifyMainCheckoutWithTimeout(path, wantSlug, gitCommandTimeout)
+}
+
+func verifyMainCheckoutWithTimeout(path, wantSlug string, timeout time.Duration) error {
 	gitDir, err := os.Stat(filepath.Join(path, ".git"))
 	if err != nil || !gitDir.IsDir() {
 		return fmt.Errorf("local.path is not a main Git checkout")
 	}
-	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", path, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return fmt.Errorf("cannot read origin from local checkout")
 	}

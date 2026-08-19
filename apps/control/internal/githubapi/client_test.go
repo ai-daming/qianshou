@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -76,6 +77,83 @@ func TestListMilestonesRejectsUntrustworthyPagination(t *testing.T) {
 				t.Fatalf("unsafe pagination accepted")
 			}
 		})
+	}
+}
+
+func TestListEndpointsEnforcePaginationPageLimit(t *testing.T) {
+	type endpointCase struct {
+		name string
+		path string
+		call func(*Client) error
+	}
+	endpoints := []endpointCase{
+		{
+			name: "milestones",
+			path: "/repos/ai-daming/qianshou/milestones",
+			call: func(client *Client) error {
+				_, err := client.ListMilestones(context.Background(), "ai-daming/qianshou")
+				return err
+			},
+		},
+		{
+			name: "milestone issues",
+			path: "/repos/ai-daming/qianshou/issues",
+			call: func(client *Client) error {
+				_, err := client.ListMilestoneIssues(context.Background(), "ai-daming/qianshou", 1)
+				return err
+			},
+		},
+	}
+	for _, endpoint := range endpoints {
+		for _, scenario := range []struct {
+			name     string
+			lastPage int
+			wantErr  bool
+		}{
+			{name: "one hundred pages succeed", lastPage: 100},
+			{name: "page one hundred and one is rejected", lastPage: 101, wantErr: true},
+		} {
+			t.Run(endpoint.name+"/"+scenario.name, func(t *testing.T) {
+				var requests atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != endpoint.path {
+						http.NotFound(w, r)
+						return
+					}
+					requests.Add(1)
+					page := 1
+					if raw := r.URL.Query().Get("page"); raw != "" {
+						var err error
+						page, err = strconv.Atoi(raw)
+						if err != nil {
+							t.Fatalf("page query = %q: %v", raw, err)
+						}
+					}
+					if page < scenario.lastPage {
+						query := r.URL.Query()
+						query.Set("page", strconv.Itoa(page+1))
+						w.Header().Set("Link", fmt.Sprintf("<%s%s?%s>; rel=\"next\"", requestOrigin(r), r.URL.Path, query.Encode()))
+					}
+					if endpoint.name == "milestones" {
+						fmt.Fprintf(w, `[{"url":%q,"number":%d,"title":"M%d","state":"open"}]`, requestOrigin(r)+"/repos/ai-daming/qianshou/milestones/"+strconv.Itoa(page), page, page)
+						return
+					}
+					fmt.Fprint(w, `[]`)
+				}))
+				defer srv.Close()
+
+				err := endpoint.call(newTestClient(srv))
+				if scenario.wantErr && err == nil {
+					t.Fatal("pagination beyond page 100 was accepted")
+				}
+				if !scenario.wantErr && err != nil {
+					t.Fatalf("100-page response rejected: %v", err)
+				}
+				if got := requests.Load(); got != 100 {
+					t.Fatalf("requests = %d, want exactly 100", got)
+				}
+			})
+		}
 	}
 }
 

@@ -23,6 +23,7 @@ const (
 	DefaultGraphQLEndpoint = "https://api.github.com/graphql"
 	responseBodyLimit      = 4 << 20
 	dependencyBatchSize    = 100
+	maxPaginationPages     = 100
 )
 
 var slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -317,7 +318,12 @@ func (c *Client) eachPage(ctx context.Context, first string, consume func([]byte
 		return fmt.Errorf("invalid GitHub endpoint")
 	}
 	seen := make(map[string]struct{})
+	pages := 0
 	for current != nil {
+		if pages >= maxPaginationPages {
+			return fmt.Errorf("GitHub pagination exceeded the %d-page limit", maxPaginationPages)
+		}
+		pages++
 		key := current.String()
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("GitHub pagination loop detected")
