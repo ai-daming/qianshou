@@ -28,21 +28,19 @@ Issue Workspace
 ├── Discussion Hub
 │   ├── Conversations
 │   ├── Stop Conditions
-│   ├── Decisions and resolutions
-│   ├── Open questions
-│   └── Current effective understanding
+│   └── Adopted and superseded Brief versions
 ├── Delivery Track
 │   ├── Adopted development brief and DeliveryBaseline
 │   ├── Issue worktree and branch
 │   ├── Implementation and repair conversations
 │   ├── PR, test evidence, and independent Review rounds
 │   └── Integration, merge, and close-out
-└── Activity and Evidence
-    ├── GitHub facts
-    ├── Git facts
-    ├── test evidence
-    └── local ledger events
+└── Derived views
+    ├── current GitHub, Git, test, and Runner facts
+    └── immutable local Run events and adopted artifacts
 ```
+
+Issue Workspace, Activity, Evidence, Decision, Notes, and Open Question are UI concepts, not generic SQLite tables. Durable meaning must live in a concrete BriefVersion, DeliveryBaseline, ReviewRound, StopCondition, AgentRun, VendorFrame, or RunEvent.
 
 ## Two independent dimensions
 
@@ -52,16 +50,13 @@ The Discussion Hub exists for the entire lifetime of the Issue. It may contain s
 
 Changing Claude Code to Codex does not mutate a Conversation. It creates another Discussion Conversation within the same Issue Workspace. Qianshou rebuilds useful context from explicit Issue artifacts and evidence rather than pretending to transfer an opaque vendor session.
 
-The durable semantic context is not merely the raw transcript. It consists of:
+The durable semantic context is not merely the raw transcript. It is reconstructed from:
 
-- current effective understanding;
-- confirmed decisions;
-- rejected or superseded decisions;
-- unresolved questions;
 - development-brief versions and the currently adopted version;
-- scope-change proposals;
 - Stop Conditions and their resolutions;
-- references to the delivery evidence that caused a discussion.
+- immutable Run events and the frozen evidence carried by adopted Baselines and Reviews.
+
+This does not create separate Decision, Question, Note, or generic Evidence records. A decision that changes delivery becomes a new adopted Brief/Baseline or a StopCondition resolution; otherwise it remains conversation event history.
 
 ### Delivery Track
 
@@ -90,27 +85,24 @@ WAITING_FOR_WORKTREE
 
 A Stop Condition pauses legal delivery actions but does not replace the Track lifecycle or erase the derived stage. For example, an active Track may derive as `REVIEWING` while one Stop Condition remains open. Resolving that Stop Condition can resume Review, request repair, invalidate the baseline, or restructure the work.
 
-The legacy writable phase values, including `BLOCKED` and `NEEDS_HUMAN`, may be read during migration, but new workflow behavior must derive workbench stages and represent attention separately from the Track lifecycle.
+Writable phase values, including `BLOCKED` and `NEEDS_HUMAN`, are rejected rather than migrated. Workbench stages are derived and attention is represented separately from the Track lifecycle.
 
 ## Stop Condition
 
 A Stop Condition is a structured escalation into the Discussion Hub. It answers why delivery stopped and preserves the exact recovery point.
 
-Minimum fields:
+Persisted fields:
 
 ```text
-id
-Issue number
-category
-summary and detail
-origin derived Delivery stage
-origin Conversation, when known
-PR reference and head SHA at the time, when present
-status: OPEN or RESOLVED
-resolution
-outcome / resume action
-created and resolved timestamps
+stop condition id
+Track id and optional Baseline id
+kind and reason
+complete evidence JSON and payload hash
+created timestamp
+resolution, outcome JSON, and resolved timestamp (all null or all set once)
 ```
+
+OPEN and RESOLVED are derived from the resolution fields; no writable status is stored. Evidence JSON may freeze a derived Stage, PR head, or other complete evidence needed for the human decision, but it is not a second current-fact source.
 
 Initial categories:
 
@@ -181,21 +173,19 @@ Opening an Issue Workspace always reconciles current GitHub and Git facts with t
 
 Qianshou's value is not merely launching an Agent. Its control-plane value is preserving provenance, exposing disagreement, and recovering the correct legal next action after interruption or external change.
 
-## Initial implementation slice
+## M1 implementation boundary
 
-The first slice implements:
+M1 establishes:
 
-- persistent Stop Conditions in the local ledger;
-- derived-stage, PR, and reviewed-head snapshots when a Stop Condition opens;
-- resolution outcomes without erasing the Track lifecycle or resume point;
-- API boundaries for opening and resolving Stop Conditions;
-- an Issue Workbench with an always-visible Discussion Hub;
-- a delivery pause gate while Stop Conditions remain open;
-- activity/evidence display separate from conversation controls.
+- central persistent StopConditions and one-shot resolution outcomes;
+- pure derived Stage, allowed-action, and blocked-reason calculation;
+- exact Review and Run evidence needed by later API/UI work;
+- a delivery pause gate while StopConditions remain open;
+- an always-visible Discussion surface independent of Delivery Stage.
 
 The first slice does not claim:
 
 - automatic extraction of durable decisions from chat;
 - automatic GitHub Issue, relationship, or Milestone creation;
 - automatic PR creation, approval, merge, or cleanup;
-- complete `~/.qianshou` or SQLite migration.
+- remote Runner transport, authentication, or TLS.

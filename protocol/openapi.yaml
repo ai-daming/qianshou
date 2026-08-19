@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Qianshou Control Plane API
   version: 1.0.0
-  description: Local, read-only Project and dynamic Scope facts served by qianshou.
+  description: Central Project catalog and dynamic external facts served by qianshou.
 servers:
   - url: http://127.0.0.1:41727
     description: Local control server
@@ -21,14 +21,36 @@ paths:
   /api/v1/projects:
     get:
       operationId: listProjects
-      summary: List configured Projects without machine-private fields
+      summary: List central SQLite Projects without machine-private fields
       responses:
         "200":
-          description: Configured Projects
+          description: Active central Projects
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProjectsResponse"
+    post:
+      operationId: createProject
+      summary: Resolve a GitHub repository and create its immutable central Project identity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created or identically retried
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/InvalidProject"
+        "409":
+          $ref: "#/components/responses/ProjectIdentityConflict"
+        "502":
+          $ref: "#/components/responses/GitHubFactsUnavailable"
   /api/v1/projects/{projectId}/milestones:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -117,13 +139,25 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     ProjectNotFound:
-      description: The Project is not configured
+      description: The central Project does not exist
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     GitHubFactsUnavailable:
       description: Current GitHub facts could not be read completely
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InvalidProject:
+      description: The requested Project identity is invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ProjectIdentityConflict:
+      description: The Project ID or GitHub repository ID is already owned
       content:
         application/json:
           schema:
@@ -137,15 +171,31 @@ components:
         status:
           type: string
           enum: [ok]
-    RepositoryLocator:
+    RepositoryIdentity:
       type: object
       additionalProperties: false
-      required: [provider, slug]
+      description: GitHub numeric identity plus the historical slug used at Project creation
+      required: [provider, id, creationSlug]
       properties:
         provider:
           type: string
           enum: [github]
-        slug:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+        creationSlug:
+          type: string
+          pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+    CreateProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [id, repositorySlug]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        repositorySlug:
           type: string
           pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
     Project:
@@ -156,7 +206,7 @@ components:
         id:
           type: string
         repository:
-          $ref: "#/components/schemas/RepositoryLocator"
+          $ref: "#/components/schemas/RepositoryIdentity"
     ProjectsResponse:
       type: object
       additionalProperties: false

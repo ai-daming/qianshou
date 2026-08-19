@@ -8,14 +8,23 @@ export type HealthResponse = {
   status: "ok";
 };
 
-export type RepositoryLocator = {
+/**
+ * GitHub numeric identity plus the historical slug used at Project creation
+ */
+export type RepositoryIdentity = {
   provider: "github";
-  slug: string;
+  id: number;
+  creationSlug: string;
+};
+
+export type CreateProjectRequest = {
+  id: string;
+  repositorySlug: string;
 };
 
 export type Project = {
   id: string;
-  repository: RepositoryLocator;
+  repository: RepositoryIdentity;
 };
 
 export type ProjectsResponse = {
@@ -110,12 +119,45 @@ export type ListProjectsData = {
 
 export type ListProjectsResponses = {
   /**
-   * Configured Projects
+   * Active central Projects
    */
   200: ProjectsResponse;
 };
 
 export type ListProjectsResponse = ListProjectsResponses[keyof ListProjectsResponses];
+
+export type CreateProjectData = {
+  body: CreateProjectRequest;
+  path?: never;
+  query?: never;
+  url: "/api/v1/projects";
+};
+
+export type CreateProjectErrors = {
+  /**
+   * The requested Project identity is invalid
+   */
+  400: ErrorResponse;
+  /**
+   * The Project ID or GitHub repository ID is already owned
+   */
+  409: ErrorResponse;
+  /**
+   * Current GitHub facts could not be read completely
+   */
+  502: ErrorResponse;
+};
+
+export type CreateProjectError = CreateProjectErrors[keyof CreateProjectErrors];
+
+export type CreateProjectResponses = {
+  /**
+   * Project created or identically retried
+   */
+  201: Project;
+};
+
+export type CreateProjectResponse = CreateProjectResponses[keyof CreateProjectResponses];
 
 export type ListProjectMilestonesData = {
   body?: never;
@@ -128,7 +170,7 @@ export type ListProjectMilestonesData = {
 
 export type ListProjectMilestonesErrors = {
   /**
-   * The Project is not configured
+   * The central Project does not exist
    */
   404: ErrorResponse;
   /**
@@ -166,7 +208,7 @@ export type ListMilestoneIssuesErrors = {
    */
   400: ErrorResponse;
   /**
-   * The Project is not configured
+   * The central Project does not exist
    */
   404: ErrorResponse;
   /**
@@ -203,7 +245,7 @@ export type GetProjectIssueErrors = {
    */
   400: ErrorResponse;
   /**
-   * The Project is not configured
+   * The central Project does not exist
    */
   404: ErrorResponse;
   /**

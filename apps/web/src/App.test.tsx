@@ -7,8 +7,14 @@ import { App } from "./App.js";
 import type { FactsClient } from "./facts.js";
 
 const projects: Project[] = [
-  { id: "qianshou", repository: { provider: "github", slug: "ai-daming/qianshou" } },
-  { id: "mamamate", repository: { provider: "github", slug: "ai-daming/mamamate" } },
+  {
+    id: "qianshou",
+    repository: { provider: "github", id: 101, creationSlug: "ai-daming/qianshou" },
+  },
+  {
+    id: "mamamate",
+    repository: { provider: "github", id: 202, creationSlug: "ai-daming/mamamate" },
+  },
 ];
 
 const milestones: Record<string, Milestone[]> = {

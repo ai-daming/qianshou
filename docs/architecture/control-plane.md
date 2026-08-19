@@ -18,7 +18,7 @@ External facts remain authoritative:
 - Git owns worktree paths, branches, ancestry, dirtiness, and commit identity.
 - Test commands own pass/fail evidence.
 
-The local Qianshou ledger owns only workflow assertions and collaboration artifacts: DeliveryTrack lifecycle, immutable-engine conversations, Agent turns, adopted development briefs, DeliveryBaselines, Issue workspace bindings, Review rounds, notes, and event history. Configuration identifies Projects, enabled Engines, repository locators, and machine-local main checkouts. Scope is selected at runtime; Landing is delivery intent, not Project configuration. Neither may declare GitHub titles, membership, roles, relationships, or states. The UI must display external and local state separately when they disagree.
+The central Qianshou SQLite ledger owns the global Project and Runner catalog plus workflow assertions and artifacts that have no external owner: DeliveryTrack lifecycle, immutable-engine Conversations, AgentRuns, adopted development briefs, DeliveryBaselines, Runner/Project and Track/worktree bindings, Review rounds, StopConditions, exact Vendor frames, and normalized Run events. Runner-local configuration owns only allowed roots and enabled adapters/executables. Scope is selected at runtime; Landing is delivery intent. Neither SQLite nor config may declare current GitHub titles, membership, relationships, states, current Git state, test results, or process state. The UI must display external and local evidence separately when they disagree.
 
 ## Conversation invariant
 
@@ -46,7 +46,7 @@ ADOPTED DEVELOPMENT BRIEF + FROZEN DELIVERY BASELINE
 
 These are calculated workbench stages, not manually writable DeliveryTrack states. A Track stores only `ACTIVE`, `COMPLETED`, or `ABANDONED`. GitHub, Git, PR, Agent Run, Review, evidence, and ledger facts determine the current stage and legal actions.
 
-A Stop Condition is an explicit side state in the Discussion Hub. It pauses legal delivery actions while retaining the active Track, PR, reviewed head SHA, and evidence. The legacy `BLOCKED` and `NEEDS_HUMAN` phase values remain readable during migration but are not the target model for new interruptions.
+A Stop Condition is an explicit side state in the Discussion Hub. It pauses legal delivery actions while retaining the active Track, PR, reviewed head SHA, and evidence. There is no compatibility read for legacy writable phases: `BLOCKED` and `NEEDS_HUMAN` are not ledger states.
 
 ## Role boundary
 
@@ -56,8 +56,10 @@ A Stop Condition is an explicit side state in the Discussion Hub. It pauses lega
 - Repair returns to the implementer context.
 - Integration gate verifies that the approved Review still targets the current PR head before a human-approved merge.
 
-## Local execution boundary
+## Execution boundary
 
 Qianshou may run `git worktree add -b` from an explicitly adopted Landing target and start a Claude Code or Codex process only after an explicit user click. Worktree discovery and creation use Git directly; no external worktree registry or manager participates. Discussion and Review run read-only/plan profiles; implementation and repair run workspace-write/edit profiles. CLI arguments are passed without a shell and prompts are written through stdin.
+
+One central Server exclusively opens SQLite. Multiple Runners actively connect to it and never expose an execution listener for the Server to dial. A central command selects only a logical Project, binding, Engine, and structured operation; Runner-local roots, adapters, executables, and credentials remain the final permission boundary. M1 uses the same boundary in process. Remote transport, authentication, and TLS arrive together in M2 before any non-loopback operation.
 
 Qianshou does not merge branches, push commits, publish releases, deploy services, or perform production writes without a separate explicit authorization. An Agent completion message never proves that Coding or Review completed: Qianshou must refresh the PR, Git head, checks, tests, and recorded Review evidence before enabling the next action.

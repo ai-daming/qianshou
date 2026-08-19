@@ -187,10 +187,10 @@ export function App({ facts }: { facts: FactsClient }) {
           <label className="field">
             <span>Project</span>
             <select value={projectId} onChange={(event) => selectProject(event.target.value)}>
-              <option value="">选择已配置 Project</option>
+              <option value="">选择中央 Project</option>
               {projectsQuery.data?.projects.map((project) => (
                 <option key={project.id} value={project.id}>
-                  {project.id} · {project.repository.slug}
+                  {project.id} · {project.repository.creationSlug}
                 </option>
               ))}
             </select>
@@ -199,7 +199,7 @@ export function App({ facts }: { facts: FactsClient }) {
           {selectedProject ? (
             <div className="repository-card">
               <span className="eyebrow">REPOSITORY</span>
-              <strong>{selectedProject.repository.slug}</strong>
+              <strong>{selectedProject.repository.creationSlug}</strong>
               <small>本机路径和凭据不会返回浏览器</small>
             </div>
           ) : null}
@@ -265,8 +265,8 @@ export function App({ facts }: { facts: FactsClient }) {
               </h2>
               <p>
                 {selectedProject
-                  ? `${selectedProject.id} / ${selectedProject.repository.slug}`
-                  : "先选择一个已配置 Project。"}
+                  ? `${selectedProject.id} / ${selectedProject.repository.creationSlug}`
+                  : "先选择一个中央 Project。"}
               </p>
             </div>
             <button

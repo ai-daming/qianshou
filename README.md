@@ -2,7 +2,7 @@
 
 Qianshou is a local-first AI software delivery control plane. It keeps GitHub, Git, worktree, conversation, development brief, PR Review, and human handoff state visible, and can run explicitly selected Claude Code or Codex sessions without introducing a remote workflow runtime.
 
-One `qianshou serve` process can read several configured GitHub repositories. Milestone and Issue Scopes are selected at runtime and refreshed from GitHub. Qianshou binds only to loopback; GitHub credentials remain inside the process and are never sent to the browser.
+One central `qianshou serve` process exclusively owns the SQLite Project Catalog and ledger. Milestone and Issue Scopes are selected at runtime and refreshed from GitHub. Qianshou binds only to loopback; GitHub credentials and raw Vendor frames remain inside the process and are never sent to the browser.
 
 ## Workspace
 
@@ -35,7 +35,7 @@ Install repository dependencies with `pnpm install`. The TypeScript server under
 ```bash
 install -d -m 700 ~/.qianshou
 install -m 600 config/config.example.json ~/.qianshou/config.json
-# Edit repository slugs and absolute main-checkout paths.
+# Edit the local Runner id, allowed roots, and enabled Engine commands.
 
 cd apps/control
 go test ./...
@@ -44,7 +44,22 @@ go build -o qianshou ./cmd/qianshou
 ./qianshou run     # runner process (functional from M2-02)
 ```
 
-The read-only V1 endpoints list configured Projects, refresh a Project's GitHub Milestones, refresh the Issues currently in a Milestone, and read one Issue directly. Project responses omit local paths and Engine commands. Scope, Milestone membership, Issue facts, dependencies, Landing, and Workspace are not stored in configuration.
+Create a Project through the central API; GitHub's numeric repository ID is resolved and frozen before SQLite accepts it:
+
+```bash
+curl --fail-with-body \
+  -H 'Content-Type: application/json' \
+  --data '{"id":"qianshou","repositorySlug":"ai-daming/qianshou"}' \
+  http://127.0.0.1:41727/api/v1/projects
+```
+
+V1 lists central Projects, refreshes a Project's current GitHub Milestones and Issues, and reads one Issue directly. Config V1 rejects `projects`; there is no import or fallback. Project responses expose the immutable repository ID and historical `creationSlug`, but never checkout paths or Engine commands.
+
+Raw Vendor frames are exact and unredacted. They have no browser or ordinary HTTP endpoint. For explicit debugging, stop the Server and read one frame directly to stdout:
+
+```bash
+./qianshou inspect-frame --run <run-id> --sequence 1
+```
 
 ## Verify
 
@@ -54,6 +69,6 @@ pnpm check
 
 `check` regenerates the TypeScript API client and rejects drift, then runs format check, typecheck, tests, and build. CI runs the same contract gate plus `go vet`/`go test`/`go build` on every push and pull request.
 
-Machine-local configuration lives at `~/.qianshou/config.json`. GitHub remains the sole source for Milestone titles and membership, Issue titles, labels and state, and native Parent/Sub-issue and Blocked by/Blocking relationships.
+Machine-local configuration lives at `~/.qianshou/config.json` and owns only Runner execution trust. GitHub remains the sole source for current repository slug, Milestone titles and membership, Issue titles, labels and state, and native Parent/Sub-issue and Blocked by/Blocking relationships.
 
 Every conversation chooses Claude Code or Codex when it is created. That engine is immutable; switching engines requires a new conversation. Qianshou can attach an adopted development brief, DeliveryBaseline, or handoff package to the new conversation, but never transfers opaque vendor session state.

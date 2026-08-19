@@ -1,0 +1,109 @@
+package ledger
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+)
+
+type StopCondition struct {
+	ID            string
+	TrackID       string
+	BaselineID    *string
+	Kind          string
+	Reason        string
+	EvidenceJSON  string
+	PayloadSHA256 string
+	CreatedAt     string
+	Resolution    *string
+	OutcomeJSON   *string
+	ResolvedAt    *string
+}
+
+func (s StopCondition) Open() bool { return s.ResolvedAt == nil }
+
+type NewStopCondition struct {
+	ID           string
+	TrackID      string
+	BaselineID   string
+	Kind         string
+	Reason       string
+	EvidenceJSON string
+}
+
+func (s *Store) OpenStopCondition(ctx context.Context, input NewStopCondition) (StopCondition, error) {
+	evidence, err := canonicalJSON("stop evidence", input.EvidenceJSON)
+	if err != nil {
+		return StopCondition{}, err
+	}
+	if strings.TrimSpace(input.Kind) == "" || strings.TrimSpace(input.Reason) == "" {
+		return StopCondition{}, fmt.Errorf("stop kind and reason are required: %w", ErrInvariant)
+	}
+	payload := strings.Join([]string{input.TrackID, input.BaselineID, input.Kind, input.Reason, evidence}, "\x00")
+	value := StopCondition{ID: input.ID, TrackID: input.TrackID, Kind: input.Kind, Reason: input.Reason,
+		EvidenceJSON: evidence, PayloadSHA256: sha256Text(payload), CreatedAt: nowText()}
+	var baseline any
+	if input.BaselineID != "" {
+		value.BaselineID = &input.BaselineID
+		baseline = input.BaselineID
+	}
+	_, insertErr := s.db.ExecContext(ctx, `INSERT INTO stop_conditions(stop_condition_id, track_id, baseline_id,
+		kind, reason, evidence_json, payload_sha256, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		value.ID, value.TrackID, baseline, value.Kind, value.Reason, value.EvidenceJSON, value.PayloadSHA256, value.CreatedAt)
+	if insertErr == nil {
+		return value, nil
+	}
+	existing, getErr := getStop(ctx, s.db, input.ID)
+	if getErr == nil && existing.PayloadSHA256 == value.PayloadSHA256 {
+		return existing, nil
+	}
+	return StopCondition{}, conflict("stop condition id is already owned by different evidence")
+}
+
+func (s *Store) ResolveStopCondition(ctx context.Context, id, resolution, outcomeJSON string) (StopCondition, error) {
+	resolution = strings.TrimSpace(resolution)
+	if resolution == "" {
+		return StopCondition{}, fmt.Errorf("stop resolution is required: %w", ErrInvariant)
+	}
+	outcome, err := canonicalJSON("stop outcome", outcomeJSON)
+	if err != nil {
+		return StopCondition{}, err
+	}
+	existing, err := getStop(ctx, s.db, id)
+	if err != nil {
+		return StopCondition{}, err
+	}
+	if existing.ResolvedAt != nil {
+		if pointerText(existing.Resolution) == resolution && pointerText(existing.OutcomeJSON) == outcome {
+			return existing, nil
+		}
+		return StopCondition{}, conflict("stop condition already has a different resolution")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE stop_conditions SET resolution = ?, outcome_json = ?, resolved_at = ?
+		WHERE stop_condition_id = ? AND resolved_at IS NULL`, resolution, outcome, nowText(), id)
+	if err != nil {
+		return StopCondition{}, fmt.Errorf("resolve stop condition: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		current, getErr := getStop(ctx, s.db, id)
+		if getErr == nil && pointerText(current.Resolution) == resolution && pointerText(current.OutcomeJSON) == outcome {
+			return current, nil
+		}
+		return StopCondition{}, conflict("stop condition changed concurrently")
+	}
+	return getStop(ctx, s.db, id)
+}
+
+func getStop(ctx context.Context, query rowQuerier, id string) (StopCondition, error) {
+	var value StopCondition
+	err := query.QueryRowContext(ctx, `SELECT stop_condition_id, track_id, baseline_id, kind, reason,
+		evidence_json, payload_sha256, created_at, resolution, outcome_json, resolved_at
+		FROM stop_conditions WHERE stop_condition_id = ?`, id).Scan(&value.ID, &value.TrackID, &value.BaselineID,
+		&value.Kind, &value.Reason, &value.EvidenceJSON, &value.PayloadSHA256, &value.CreatedAt,
+		&value.Resolution, &value.OutcomeJSON, &value.ResolvedAt)
+	if err == sql.ErrNoRows {
+		return StopCondition{}, ErrNotFound
+	}
+	return value, err
+}
