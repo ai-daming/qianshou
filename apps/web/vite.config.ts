@@ -1,13 +1,19 @@
-import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [react()],
   server: {
     host: "127.0.0.1",
     port: 41728,
     proxy: {
       "/api": "http://127.0.0.1:41727",
-      "/health": "http://127.0.0.1:41727",
+      "/healthz": "http://127.0.0.1:41727",
     },
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
   },
   build: {
     target: "es2023",
