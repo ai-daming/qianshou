@@ -131,6 +131,7 @@ CREATE TABLE agent_runs (
     terminal_at TEXT,
     terminal_detail_json TEXT CHECK (terminal_detail_json IS NULL OR json_valid(terminal_detail_json)),
     CHECK ((track_id IS NULL AND baseline_id IS NULL) OR (track_id IS NOT NULL AND baseline_id IS NOT NULL)),
+    CHECK (terminal_kind IS NULL OR started_at IS NOT NULL OR terminal_kind = 'INTERRUPTED'),
     CHECK (
         (terminal_kind IS NULL AND terminal_at IS NULL AND terminal_detail_json IS NULL)
         OR

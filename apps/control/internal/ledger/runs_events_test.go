@@ -175,6 +175,44 @@ func TestReopenInterruptsAllOrphanedRunsWithoutPretendingQueuedRunStarted(t *tes
 	}
 }
 
+func TestDirectSQLCannotRecordOrdinaryTerminalRunWithoutStartEvidence(t *testing.T) {
+	for _, terminal := range []RunState{RunCompleted, RunFailed, RunCancelled} {
+		t.Run(string(terminal), func(t *testing.T) {
+			store := openTestStore(t)
+			seed := seedTrack(t, store, "track-1")
+			conversation := createImplementationConversation(t, store, seed)
+			run, err := store.QueueRun(context.Background(), NewAgentRun{ID: "run-1", ConversationID: conversation.ID,
+				TrackID: seed.track.ID, BaselineID: seed.baseline.ID, CommandKey: "command-1", CommandJSON: `{}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := store.DB().Exec(`UPDATE agent_runs
+				SET terminal_kind = ?, terminal_at = '2026-08-19T00:00:00Z', terminal_detail_json = '{}'
+				WHERE run_id = ?`, terminal, run.ID); err == nil {
+				t.Fatalf("direct SQL recorded %s without start evidence", terminal)
+			}
+		})
+	}
+}
+
+func TestDirectSQLAllowsNeverStartedRunToBeInterrupted(t *testing.T) {
+	store := openTestStore(t)
+	seed := seedTrack(t, store, "track-1")
+	conversation := createImplementationConversation(t, store, seed)
+	run, err := store.QueueRun(context.Background(), NewAgentRun{ID: "run-1", ConversationID: conversation.ID,
+		TrackID: seed.track.ID, BaselineID: seed.baseline.ID, CommandKey: "command-1", CommandJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.DB().Exec(`UPDATE agent_runs
+		SET terminal_kind = 'INTERRUPTED', terminal_at = '2026-08-19T00:00:00Z', terminal_detail_json = '{"started":false}'
+		WHERE run_id = ?`, run.ID); err != nil {
+		t.Fatalf("direct SQL could not interrupt never-started run: %v", err)
+	}
+}
+
 func TestVendorFrameAndEventsAreAtomicExactAndContiguous(t *testing.T) {
 	store, run := seedRunningRun(t)
 	ctx := context.Background()
