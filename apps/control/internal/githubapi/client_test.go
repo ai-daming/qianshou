@@ -436,6 +436,55 @@ func TestRejectsInvalidRepositoryAndNumbers(t *testing.T) {
 	}
 }
 
+func TestResolveRepositoryFreezesNumericIdentity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"id":12345,"full_name":"ai-daming/qianshou","url":%q}`,
+			requestOrigin(r)+"/repos/ai-daming/qianshou")
+	}))
+	defer srv.Close()
+	repository, err := newTestClient(srv).ResolveRepository(context.Background(), "ai-daming/qianshou")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.ID != 12345 || repository.NameWithOwner != "ai-daming/qianshou" {
+		t.Fatalf("repository = %+v", repository)
+	}
+}
+
+func TestGetRepositoryByIDReturnsCurrentCanonicalSlugAndRejectsWrongIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      func(*http.Request) string
+		wantError bool
+	}{
+		{"current slug", func(r *http.Request) string {
+			return fmt.Sprintf(`{"id":12345,"full_name":"ai-daming/qianshou-renamed","url":%q}`,
+				requestOrigin(r)+"/repos/ai-daming/qianshou-renamed")
+		}, false},
+		{"wrong numeric id", func(r *http.Request) string {
+			return fmt.Sprintf(`{"id":999,"full_name":"ai-daming/qianshou","url":%q}`,
+				requestOrigin(r)+"/repos/ai-daming/qianshou")
+		}, true},
+		{"missing full name", func(r *http.Request) string {
+			return fmt.Sprintf(`{"id":12345,"url":%q}`, requestOrigin(r)+"/repos/ai-daming/qianshou")
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, tc.body(r))
+			}))
+			defer srv.Close()
+			got, err := newTestClient(srv).GetRepositoryByID(context.Background(), 12345)
+			if tc.wantError && err == nil {
+				t.Fatalf("untrustworthy identity accepted: %+v", got)
+			}
+			if !tc.wantError && (err != nil || got.NameWithOwner != "ai-daming/qianshou-renamed") {
+				t.Fatalf("GetRepositoryByID = %+v, %v", got, err)
+			}
+		})
+	}
+}
+
 func requestOrigin(r *http.Request) string {
 	return "http://" + r.Host
 }

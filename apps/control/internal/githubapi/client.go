@@ -61,6 +61,11 @@ type Issue struct {
 	Dependency Dependency `json:"dependency"`
 }
 
+type Repository struct {
+	ID            int64  `json:"id"`
+	NameWithOwner string `json:"nameWithOwner"`
+}
+
 type Client struct {
 	token           string
 	restEndpoint    string
@@ -82,6 +87,60 @@ func NewClient(token, restEndpoint, graphqlEndpoint string, httpClient *http.Cli
 		graphqlEndpoint: graphqlEndpoint,
 		httpClient:      httpClient,
 	}
+}
+
+func (c *Client) ResolveRepository(ctx context.Context, slug string) (Repository, error) {
+	if err := validateRepo(slug); err != nil {
+		return Repository{}, err
+	}
+	body, _, err := c.get(ctx, fmt.Sprintf("%s/repos/%s", c.restEndpoint, slug))
+	if err != nil {
+		return Repository{}, fmt.Errorf("GitHub repository identity is unavailable: %w", err)
+	}
+	repository, err := c.decodeRepository(body)
+	if err != nil {
+		return Repository{}, err
+	}
+	if !strings.EqualFold(repository.NameWithOwner, slug) {
+		return Repository{}, fmt.Errorf("GitHub response identifies a different repository")
+	}
+	return repository, nil
+}
+
+func (c *Client) GetRepositoryByID(ctx context.Context, repositoryID int64) (Repository, error) {
+	if repositoryID <= 0 {
+		return Repository{}, fmt.Errorf("repository id must be positive")
+	}
+	body, _, err := c.get(ctx, fmt.Sprintf("%s/repositories/%d", c.restEndpoint, repositoryID))
+	if err != nil {
+		return Repository{}, fmt.Errorf("current GitHub repository identity is unavailable: %w", err)
+	}
+	repository, err := c.decodeRepository(body)
+	if err != nil {
+		return Repository{}, err
+	}
+	if repository.ID != repositoryID {
+		return Repository{}, fmt.Errorf("GitHub response identifies a different repository id")
+	}
+	return repository, nil
+}
+
+func (c *Client) decodeRepository(body []byte) (Repository, error) {
+	var raw struct {
+		ID       *int64  `json:"id"`
+		FullName *string `json:"full_name"`
+		URL      *string `json:"url"`
+	}
+	if err := decodeTrustedJSON(body, &raw); err != nil {
+		return Repository{}, err
+	}
+	if raw.ID == nil || *raw.ID <= 0 || raw.FullName == nil || raw.URL == nil || !slugPattern.MatchString(*raw.FullName) {
+		return Repository{}, fmt.Errorf("GitHub repository response is missing required identity fields")
+	}
+	if err := c.verifyRESTIdentity(*raw.URL, *raw.FullName, ""); err != nil {
+		return Repository{}, err
+	}
+	return Repository{ID: *raw.ID, NameWithOwner: *raw.FullName}, nil
 }
 
 func (c *Client) ListMilestones(ctx context.Context, repo string) ([]Milestone, error) {

@@ -153,7 +153,7 @@ The Control view must not offer `Create worktree`, `Start coding`, `Open PR`, or
 
 ## Validation and failure modes
 
-Qianshou must surface configuration drift instead of guessing:
+Qianshou must surface GitHub fact or modeling drift instead of guessing:
 
 - More than one Milestone Issue carrying `type:milestone-control`: invalid initiative.
 - A previously observed Control Issue missing from the current GitHub Milestone is no longer current scope; retain its ledger history but do not display it as an active work package.
@@ -240,4 +240,4 @@ The GitHub hierarchy, native dependency relationships, and rewritten Control Iss
 - GitHub provides native hierarchy and progress instead of duplicated checklists.
 - RFCs and ADRs remain independently versioned design and decision records.
 - Qianshou can render materially different boards without guessing from prose.
-- Initiative validation introduces deliberate setup work and must fail visibly when GitHub and local configuration drift.
+- Initiative validation introduces deliberate setup work and must fail visibly when GitHub facts are missing or contradictory.

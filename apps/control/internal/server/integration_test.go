@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-daming/qianshou/apps/control/internal/config"
 	"github.com/ai-daming/qianshou/apps/control/internal/deps"
 	"github.com/ai-daming/qianshou/apps/control/internal/githubapi"
+	"github.com/ai-daming/qianshou/apps/control/internal/ledger"
 )
 
 func TestOneServerReadsTwoLiveGitHubProjects(t *testing.T) {
@@ -19,13 +19,19 @@ func TestOneServerReadsTwoLiveGitHubProjects(t *testing.T) {
 	if err != nil {
 		t.Skipf("no GitHub credentials for live server test: %v", err)
 	}
-	cfg := config.Config{Version: 1, Projects: []config.Project{
-		{ID: "qianshou", Repository: config.Repository{Provider: "github", Slug: "ai-daming/qianshou"}},
-		{ID: "mamamate", Repository: config.Repository{Provider: "github", Slug: "ai-daming/mamamate"}},
-	}}
-	server := httptest.NewServer(handler(cfg, githubapi.New(token)))
+	client := githubapi.New(token)
+	catalog := testCatalog(t)
+	for _, item := range []struct{ id, slug string }{{"qianshou", "ai-daming/qianshou"}, {"mamamate", "ai-daming/mamamate"}} {
+		repository, err := client.ResolveRepository(ctx, item.slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := catalog.CreateProject(ctx, ledger.NewProject{ID: item.id, RepositoryID: repository.ID, CreationSlug: repository.NameWithOwner}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := httptest.NewServer(handler(catalog, client))
 	defer server.Close()
-
 	for _, projectID := range []string{"qianshou", "mamamate"} {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/v1/projects/"+projectID+"/milestones", nil)
 		if err != nil {

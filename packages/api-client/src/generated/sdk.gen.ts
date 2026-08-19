@@ -9,6 +9,9 @@ import type {
   TDataShape,
 } from "./client/index.js";
 import type {
+  CreateProjectData,
+  CreateProjectErrors,
+  CreateProjectResponses,
   GetHealthData,
   GetHealthResponses,
   GetProjectIssueData,
@@ -54,7 +57,7 @@ export const getHealth = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * List configured Projects without machine-private fields
+ * List central SQLite Projects without machine-private fields
  */
 export const listProjects = <ThrowOnError extends boolean = false>(
   options?: Options<ListProjectsData, ThrowOnError>,
@@ -62,6 +65,21 @@ export const listProjects = <ThrowOnError extends boolean = false>(
   (options?.client ?? client).get<ListProjectsResponses, unknown, ThrowOnError>({
     url: "/api/v1/projects",
     ...options,
+  });
+
+/**
+ * Resolve a GitHub repository and create its immutable central Project identity
+ */
+export const createProject = <ThrowOnError extends boolean = false>(
+  options: Options<CreateProjectData, ThrowOnError>,
+): RequestResult<CreateProjectResponses, CreateProjectErrors, ThrowOnError> =>
+  (options.client ?? client).post<CreateProjectResponses, CreateProjectErrors, ThrowOnError>({
+    url: "/api/v1/projects",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 /**

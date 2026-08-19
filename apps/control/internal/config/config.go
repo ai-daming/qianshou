@@ -1,30 +1,28 @@
-// Package config loads the machine-local Qianshou configuration.
+// Package config loads Runner-local execution trust. Project identity and
+// checkout bindings belong to the central SQLite ledger, never this file.
 package config
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/ai-daming/qianshou/apps/control/internal/strictjson"
 )
 
-const gitCommandTimeout = 5 * time.Second
-
-var (
-	idPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
-	slugPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-)
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 type Config struct {
-	Version  int       `json:"version"`
-	Engines  []Engine  `json:"engines"`
-	Projects []Project `json:"projects"`
+	Version int      `json:"version"`
+	Runner  Runner   `json:"runner"`
+	Engines []Engine `json:"engines"`
+}
+
+type Runner struct {
+	ID           string   `json:"id"`
+	AllowedRoots []string `json:"allowedRoots"`
 }
 
 type Engine struct {
@@ -33,30 +31,23 @@ type Engine struct {
 	Command string `json:"command"`
 }
 
-type Project struct {
-	ID         string     `json:"id"`
-	Repository Repository `json:"repository"`
-	Local      Local      `json:"local"`
-}
-
-type Repository struct {
-	Provider string `json:"provider"`
-	Slug     string `json:"slug"`
-}
-
-type Local struct {
-	Path string `json:"path"`
-}
-
-func DefaultPath() string {
+func DefaultHome() string {
 	if home := strings.TrimSpace(os.Getenv("QIANSHOU_HOME")); home != "" {
-		return filepath.Join(home, "config.json")
+		return filepath.Clean(home)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".qianshou", "config.json")
+		fallback, absErr := filepath.Abs(".qianshou")
+		if absErr != nil {
+			return filepath.Join(string(filepath.Separator), ".qianshou")
+		}
+		return fallback
 	}
-	return filepath.Join(home, ".qianshou", "config.json")
+	return filepath.Join(home, ".qianshou")
+}
+
+func DefaultPath() string {
+	return filepath.Join(DefaultHome(), "config.json")
 }
 
 func Load(path string) (Config, error) {
@@ -65,9 +56,9 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("read Qianshou config: %w", err)
 	}
 	var raw struct {
-		Version  *int       `json:"version"`
-		Engines  *[]Engine  `json:"engines"`
-		Projects *[]Project `json:"projects"`
+		Version *int      `json:"version"`
+		Runner  *Runner   `json:"runner"`
+		Engines *[]Engine `json:"engines"`
 	}
 	if err := strictjson.Decode(data, &raw, true); err != nil {
 		return Config{}, fmt.Errorf("invalid config: %w", err)
@@ -75,13 +66,13 @@ func Load(path string) (Config, error) {
 	if raw.Version == nil {
 		return Config{}, fmt.Errorf("config version is required")
 	}
+	if raw.Runner == nil {
+		return Config{}, fmt.Errorf("config runner is required")
+	}
 	if raw.Engines == nil {
 		return Config{}, fmt.Errorf("config engines must be an array")
 	}
-	if raw.Projects == nil {
-		return Config{}, fmt.Errorf("config projects must be an array")
-	}
-	cfg := Config{Version: *raw.Version, Engines: *raw.Engines, Projects: *raw.Projects}
+	cfg := Config{Version: *raw.Version, Runner: *raw.Runner, Engines: *raw.Engines}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -91,6 +82,24 @@ func Load(path string) (Config, error) {
 func (cfg Config) validate() error {
 	if cfg.Version != 1 {
 		return fmt.Errorf("unsupported config version %d; want version 1", cfg.Version)
+	}
+	if !idPattern.MatchString(cfg.Runner.ID) {
+		return fmt.Errorf("runner.id is missing or invalid")
+	}
+	if len(cfg.Runner.AllowedRoots) == 0 {
+		return fmt.Errorf("runner.allowedRoots must contain at least one absolute path")
+	}
+	roots := make(map[string]struct{}, len(cfg.Runner.AllowedRoots))
+	for i, raw := range cfg.Runner.AllowedRoots {
+		root := filepath.Clean(strings.TrimSpace(raw))
+		if !filepath.IsAbs(root) {
+			return fmt.Errorf("runner.allowedRoots[%d] must be absolute", i)
+		}
+		if _, exists := roots[root]; exists {
+			return fmt.Errorf("duplicate runner allowed root %q", root)
+		}
+		roots[root] = struct{}{}
+		cfg.Runner.AllowedRoots[i] = root
 	}
 	engineIDs := make(map[string]struct{}, len(cfg.Engines))
 	for i, engine := range cfg.Engines {
@@ -106,79 +115,5 @@ func (cfg Config) validate() error {
 		}
 		engineIDs[key] = struct{}{}
 	}
-
-	projectIDs := make(map[string]struct{}, len(cfg.Projects))
-	repositories := make(map[string]struct{}, len(cfg.Projects))
-	for i, project := range cfg.Projects {
-		if !idPattern.MatchString(project.ID) {
-			return fmt.Errorf("projects[%d].id is missing or invalid", i)
-		}
-		idKey := strings.ToLower(project.ID)
-		if _, exists := projectIDs[idKey]; exists {
-			return fmt.Errorf("duplicate project id %q", project.ID)
-		}
-		projectIDs[idKey] = struct{}{}
-		if project.Repository.Provider != "github" {
-			return fmt.Errorf("project %q repository.provider must be github", project.ID)
-		}
-		if !slugPattern.MatchString(project.Repository.Slug) {
-			return fmt.Errorf("project %q repository.slug must be owner/repo", project.ID)
-		}
-		repoKey := strings.ToLower(project.Repository.Slug)
-		if _, exists := repositories[repoKey]; exists {
-			return fmt.Errorf("duplicate repository slug %q", project.Repository.Slug)
-		}
-		repositories[repoKey] = struct{}{}
-		if !filepath.IsAbs(project.Local.Path) {
-			return fmt.Errorf("project %q local.path must be absolute", project.ID)
-		}
-		if err := verifyMainCheckout(project.Local.Path, project.Repository.Slug); err != nil {
-			return fmt.Errorf("project %q: %w", project.ID, err)
-		}
-	}
 	return nil
-}
-
-func verifyMainCheckout(path, wantSlug string) error {
-	return verifyMainCheckoutWithTimeout(path, wantSlug, gitCommandTimeout)
-}
-
-func verifyMainCheckoutWithTimeout(path, wantSlug string, timeout time.Duration) error {
-	gitDir, err := os.Stat(filepath.Join(path, ".git"))
-	if err != nil || !gitDir.IsDir() {
-		return fmt.Errorf("local.path is not a main Git checkout")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", path, "remote", "get-url", "origin").Output()
-	if err != nil {
-		return fmt.Errorf("cannot read origin from local checkout")
-	}
-	gotSlug, err := githubSlugFromRemote(strings.TrimSpace(string(out)))
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(gotSlug, wantSlug) {
-		return fmt.Errorf("local checkout repository %q does not match configured %q", gotSlug, wantSlug)
-	}
-	return nil
-}
-
-func githubSlugFromRemote(remote string) (string, error) {
-	var slug string
-	switch {
-	case strings.HasPrefix(remote, "https://github.com/"):
-		slug = strings.TrimPrefix(remote, "https://github.com/")
-	case strings.HasPrefix(remote, "ssh://git@github.com/"):
-		slug = strings.TrimPrefix(remote, "ssh://git@github.com/")
-	case strings.HasPrefix(remote, "git@github.com:"):
-		slug = strings.TrimPrefix(remote, "git@github.com:")
-	default:
-		return "", fmt.Errorf("origin is not a supported github.com URL")
-	}
-	slug = strings.TrimSuffix(slug, ".git")
-	if !slugPattern.MatchString(slug) {
-		return "", fmt.Errorf("origin does not identify one github.com owner/repo")
-	}
-	return slug, nil
 }

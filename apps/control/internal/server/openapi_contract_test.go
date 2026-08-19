@@ -64,7 +64,8 @@ func TestOpenAPIValidatesEveryDeclaredHandlerResponse(t *testing.T) {
 	}
 	successFacts := func() *fakeFacts {
 		return &fakeFacts{
-			milestones: []githubapi.Milestone{{Number: 1, Title: "M1", State: "OPEN"}},
+			repositories: map[int64]githubapi.Repository{101: {ID: 101, NameWithOwner: "ai-daming/qianshou"}},
+			milestones:   []githubapi.Milestone{{Number: 1, Title: "M1", State: "OPEN"}},
 			issues: []githubapi.Issue{
 				{Number: 34, Title: "Ready", State: "OPEN", Labels: []string{}, Dependency: ready},
 				{Number: 35, Title: "Blocked", State: "OPEN", Labels: []string{"type:technical"}, Dependency: blocked},
@@ -73,7 +74,12 @@ func TestOpenAPIValidatesEveryDeclaredHandlerResponse(t *testing.T) {
 			issue: githubapi.Issue{Number: 36, Title: "Issue", State: "OPEN", Labels: []string{}, Dependency: dependencyError},
 		}
 	}
-	failingFacts := func() *fakeFacts { return &fakeFacts{err: errors.New("facts unavailable")} }
+	failingFacts := func() *fakeFacts {
+		return &fakeFacts{
+			repositories: map[int64]githubapi.Repository{101: {ID: 101, NameWithOwner: "ai-daming/qianshou"}},
+			err:          errors.New("facts unavailable"),
+		}
+	}
 
 	tests := []struct {
 		name        string
@@ -99,6 +105,8 @@ func TestOpenAPIValidatesEveryDeclaredHandlerResponse(t *testing.T) {
 	router := loadOpenAPIContract(t)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			catalog := testCatalog(t)
+			addProject(t, catalog, "qianshou", 101, "ai-daming/qianshou")
 			req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:41727"+tc.path, nil)
 			route, _, err := router.FindRoute(req)
 			if err != nil {
@@ -108,7 +116,7 @@ func TestOpenAPIValidatesEveryDeclaredHandlerResponse(t *testing.T) {
 				t.Fatalf("operationId = %q, want %q", got, tc.operationID)
 			}
 			rr := httptest.NewRecorder()
-			handler(testConfig(), tc.facts).ServeHTTP(rr, req)
+			handler(catalog, tc.facts).ServeHTTP(rr, req)
 			if rr.Code != tc.status {
 				t.Fatalf("status = %d, want %d: %s", rr.Code, tc.status, rr.Body.String())
 			}
@@ -119,6 +127,18 @@ func TestOpenAPIValidatesEveryDeclaredHandlerResponse(t *testing.T) {
 				t.Fatalf("response does not match OpenAPI: %v\n%s", err, rr.Body.String())
 			}
 		})
+	}
+}
+
+func TestOpenAPIDeclaresCreateProject(t *testing.T) {
+	router := loadOpenAPIContract(t)
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:41727/api/v1/projects", nil)
+	route, _, err := router.FindRoute(req)
+	if err != nil {
+		t.Fatalf("match create Project operation: %v", err)
+	}
+	if got := route.Operation.OperationID; got != "createProject" {
+		t.Fatalf("operationId = %q, want createProject", got)
 	}
 }
 

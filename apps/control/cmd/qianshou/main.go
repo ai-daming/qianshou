@@ -6,10 +6,14 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"os"
 
+	"github.com/ai-daming/qianshou/apps/control/internal/config"
 	"github.com/ai-daming/qianshou/apps/control/internal/depscli"
+	"github.com/ai-daming/qianshou/apps/control/internal/ledger"
 	"github.com/ai-daming/qianshou/apps/control/internal/runner"
 	"github.com/ai-daming/qianshou/apps/control/internal/server"
 )
@@ -32,6 +36,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "run:", err)
 			os.Exit(1)
 		}
+	case "inspect-frame":
+		if err := inspectFrame(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "inspect-frame:", err)
+			os.Exit(1)
+		}
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -41,5 +50,21 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: qianshou <serve|run|can-start> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: qianshou <serve|run|can-start|inspect-frame> [flags]")
+}
+
+func inspectFrame(args []string) error {
+	flags := flag.NewFlagSet("inspect-frame", flag.ContinueOnError)
+	home := flags.String("home", config.DefaultHome(), "central Qianshou home (server must be stopped)")
+	runID := flags.String("run", "", "AgentRun id")
+	sequence := flags.Int("sequence", 0, "Vendor frame sequence")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	raw, err := ledger.ReadRawFrame(context.Background(), *home, *runID, *sequence)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(raw)
+	return err
 }

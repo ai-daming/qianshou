@@ -84,7 +84,7 @@ IssueDefinition
 
 `templateSpecificFields` holds genuinely type-specific information such as Bug reproduction steps or an Operation rollback plan. Core fields such as Goal, Acceptance Criteria, constraints, and Definition of Done must not be hidden inside an arbitrary JSON document.
 
-Issue, Parent/Sub-issue, Milestone, dependency, label, native Issue Type, and body facts remain owned by GitHub. Qianshou may cache and normalize them, but `~/.qianshou/config.json` must not classify individual Issues or duplicate their bodies.
+Issue, Parent/Sub-issue, Milestone, dependency, label, native Issue Type, and current body facts remain owned by GitHub. Qianshou may normalize them in memory for a current request. Config and ordinary ledger refreshes must not classify individual Issues or duplicate their bodies. A DeliveryBaseline freezes the body only as immutable evidence of an explicit adoption decision.
 
 ## Goal, Acceptance Criteria, TDD, and Definition of Done
 
@@ -132,7 +132,7 @@ Resolved DoD = versioned Project default DoD + Issue-specific DoD
 
 The Project default covers repository-wide requirements such as test discipline, Review independence, target coverage, required documentation, merge policy, and cleanup. The Issue-specific section adds requirements unique to the work, such as a regression test, a data migration check, a privacy inspection, or production observation.
 
-The resolved list and its source versions are frozen into the DeliveryBaseline. A later Project-policy change must not silently reinterpret an in-flight DeliveryTrack; adopting a revised baseline is an explicit discussion decision.
+The resolved list is frozen as JSON in the DeliveryBaseline. The current Project policy remains owned by its existing Git/repository source; no separate Project-policy table is introduced here. A later policy change must not silently reinterpret an in-flight DeliveryTrack; adopting a revised baseline is an explicit discussion decision.
 
 ## DeliveryBaseline and DeliveryTrack boundary
 
@@ -146,14 +146,12 @@ For a `DELIVERY` Issue, clicking **Adopt development brief** is the business bou
 
 ```text
 DeliveryBaseline
-├── issueRef
-├── issueBodySnapshot
-├── issueBodyHash
-├── issueUpdatedAt
-├── adoptedBriefId
-├── resolvedDoD[]
-├── projectDoDVersion
-└── adoptedAt
+├── immutable baseline id and Track sequence
+├── adoption key
+├── issue body snapshot, SHA-256, and updatedAt
+├── adopted BriefVersion id
+├── resolved DoD JSON
+└── normalized payload hash and createdAt
 ```
 
 The snapshot is historical evidence of the accepted target, not an independently editable copy of GitHub truth. If the current Issue body hash later differs, Qianshou opens or proposes a scope-change Stop Condition and pauses delivery mutations until Discussion resolves the change.
@@ -187,9 +185,9 @@ Qianshou does not model a user-visible or independently managed Candidate object
 
 ```text
 ReviewRound
+├── deliveryBaselineId
 ├── pullRequestRef
 ├── reviewedHeadSha
-├── reviewerRunId
 ├── criterionResults[]
 ├── verdict
 ├── findings[]
@@ -350,5 +348,5 @@ The Qianshou repository carries the classification label set — `workflow:contr
 - Review becomes traceable to explicit Goal, Acceptance Criteria, DoD, and a particular PR revision.
 - Project-wide quality rules remain reusable without hiding Issue-specific completion requirements.
 - Scope changes become explicit baseline invalidations instead of silent prompt changes.
-- Runtime storage, APIs, and UI that still refer to a Candidate domain object or manually writable delivery phase require migration to the PR Review and derived-stage model.
+- Runtime storage, APIs, and UI must use the PR Review and derived-stage model; there is no legacy Candidate or writable-phase compatibility path.
 - GitHub Issue templates, type markers, Project default DoD storage, criterion evidence UI, and classification migration require separate implementation Issues.

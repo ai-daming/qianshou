@@ -59,7 +59,7 @@ Rationale: cross-compiled static distribution of one artifact, one version to tr
 
 ### SQLite ownership
 
-The server is the only process that opens the SQLite ledger, using the pure-Go driver `modernc.org/sqlite` to keep cross-compilation and the single-binary goal painless. Schema DDL and ordered migrations live with the Go server.
+The server is the only live operational process that opens the SQLite ledger, using the pure-Go driver `modernc.org/sqlite` to keep cross-compilation and the single-binary goal painless. An exclusive ownership lock prevents a second Server from racing recovery. The explicit offline `inspect-frame` maintenance command may open the database read-only only while the Server is stopped. Schema DDL and ordered checksum-verified migrations live with the Go server.
 
 ### Language and migration order: Go from the start
 
@@ -73,13 +73,13 @@ Migration order:
 
 1. M1-01 commits the TypeScript prototype as the executable specification, then freezes it (bug fixes only). This ADR, the Go skeleton, the OpenAPI seed, CI, and the formatting baseline land through this PR.
 2. M1-02 through M1-07 are implemented in Go directly against the frozen contract: the API surface of the prototype is captured in `protocol/openapi.yaml` as API v1 so the existing web keeps working unchanged.
-3. During M1, agent commands execute inside the server process behind an internal executor interface (the runner exists as a library). M2-02 extracts `qianshou run` as a standalone process over the idempotent command protocol, then adds remote host registration.
+3. During M1, agent commands execute inside the server process behind an internal executor interface (the runner exists as a library). M2-02 extracts `qianshou run` as a standalone client that actively connects to the central Server; the Server never dials Runner hosts or uses SSH as its execution protocol.
 4. The React scaffold starts at M1-03 (#4); M1-05 and M1-06 build their UI on it. The Workbench finishing work stays in M2-03 (#12).
 5. The TypeScript prototype and `packages/core` retire in M2-01 (#10) once Go tests cover the comparison points.
 
 ## Consequences
 
 - Zero porting debt for M1 business code; the bootstrap milestone runs longer instead.
-- One static binary eventually serves UI and API from a single process bound to loopback; remote exposure arrives only with M2-05 authentication and TLS.
+- The central Server remains bound to loopback through M1. Standalone Runner extraction does not authorize remote plaintext operation: remote registration, credential validation, authentication, TLS, and any non-loopback exposure must land together behind the M2-05 security boundary.
 - Contract-first development: server changes must update `protocol/openapi.yaml`, and CI regenerates and type-checks the client so drift fails the build instead of surfacing at runtime.
 - The frozen TypeScript prototype remains runnable for comparison until M2-01 removes it.

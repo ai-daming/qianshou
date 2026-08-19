@@ -1,5 +1,9 @@
 {
   "version": 1,
+  "runner": {
+    "id": "runner-1",
+    "allowedRoots": ["/absolute/path/to/workspaces"]
+  },
   "engines": [
     {
       "id": "codex",
@@ -10,18 +14,6 @@
       "id": "claude-code",
       "adapter": "claude-code-cli",
       "command": "claude"
-    }
-  ],
-  "projects": [
-    {
-      "id": "qianshou",
-      "repository": {
-        "provider": "github",
-        "slug": "ai-daming/qianshou"
-      },
-      "local": {
-        "path": "/absolute/path/to/qianshou-main-checkout"
-      }
     }
   ]
 }
