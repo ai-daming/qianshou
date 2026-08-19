@@ -359,7 +359,7 @@ func (c *Client) get(ctx context.Context, endpoint string) ([]byte, []string, er
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("GitHub request failed")
+		return nil, nil, fmt.Errorf("GitHub request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.Request == nil || resp.Request.URL.String() != req.URL.String() {

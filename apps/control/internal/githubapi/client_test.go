@@ -3,6 +3,7 @@ package githubapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func newTestClient(server *httptest.Server) *Client {
@@ -39,6 +41,20 @@ func TestListMilestonesFollowsNextLink(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Number != 1 || got[1].Number != 2 || requests.Load() != 2 {
 		t.Fatalf("milestones = %+v, requests = %d", got, requests.Load())
+	}
+}
+
+func TestListMilestonesPreservesDeadlineCause(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := newTestClient(srv).ListMilestones(ctx, "ai-daming/qianshou")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want preserved context deadline", err)
 	}
 }
 
@@ -126,7 +142,8 @@ func TestListEndpointsEnforcePaginationPageLimit(t *testing.T) {
 						var err error
 						page, err = strconv.Atoi(raw)
 						if err != nil {
-							t.Fatalf("page query = %q: %v", raw, err)
+							t.Errorf("page query = %q: %v", raw, err)
+							return
 						}
 					}
 					if page < scenario.lastPage {

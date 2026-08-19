@@ -63,6 +63,9 @@ func TestGitHubFactsDeadlineReturnsExistingStructuredError(t *testing.T) {
 			if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), `"code":"GITHUB_FACTS_UNAVAILABLE"`) {
 				t.Fatalf("GET %s = %d %s", path, rr.Code, rr.Body.String())
 			}
+			if !strings.Contains(rr.Body.String(), `"message":"Current GitHub facts could not be read completely before the request deadline."`) {
+				t.Fatalf("GET %s did not identify the deadline: %s", path, rr.Body.String())
+			}
 		})
 	}
 }
@@ -256,6 +259,9 @@ func TestPaginationLimitFailureReturnsExistingStructuredError(t *testing.T) {
 		rr := getJSON(t, h, path, nil)
 		if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), `"code":"GITHUB_FACTS_UNAVAILABLE"`) {
 			t.Fatalf("GET %s = %d %s", path, rr.Code, rr.Body.String())
+		}
+		if strings.Contains(rr.Body.String(), "request deadline") {
+			t.Fatalf("GET %s mislabeled a pagination trust failure as a deadline: %s", path, rr.Body.String())
 		}
 	}
 }

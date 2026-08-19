@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -21,6 +22,8 @@ import (
 )
 
 const githubFactsTimeout = 90 * time.Second
+
+const githubFactsDeadlineMessage = "Current GitHub facts could not be read completely before the request deadline."
 
 func Serve(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -98,7 +101,7 @@ func handlerWithFactsTimeout(cfg config.Config, facts factsReader, factsTimeout 
 		defer cancel()
 		milestones, err := facts.ListMilestones(ctx, project.Repository.Slug)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", "Current GitHub Milestone facts could not be read completely.")
+			writeGitHubFactsError(w, ctx, err, "Current GitHub Milestone facts could not be read completely.")
 			return
 		}
 		if milestones == nil {
@@ -121,7 +124,7 @@ func handlerWithFactsTimeout(cfg config.Config, facts factsReader, factsTimeout 
 		defer cancel()
 		issues, err := facts.ListMilestoneIssues(ctx, project.Repository.Slug, milestone)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", "Current GitHub Milestone Issue facts could not be read completely.")
+			writeGitHubFactsError(w, ctx, err, "Current GitHub Milestone Issue facts could not be read completely.")
 			return
 		}
 		if issues == nil {
@@ -144,12 +147,20 @@ func handlerWithFactsTimeout(cfg config.Config, facts factsReader, factsTimeout 
 		defer cancel()
 		issue, err := facts.GetIssue(ctx, project.Repository.Slug, issueNumber)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", "Current GitHub Issue facts could not be read completely.")
+			writeGitHubFactsError(w, ctx, err, "Current GitHub Issue facts could not be read completely.")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"projectId": project.ID, "issue": issue})
 	})
 	return mux
+}
+
+func writeGitHubFactsError(w http.ResponseWriter, ctx context.Context, err error, fallbackMessage string) {
+	message := fallbackMessage
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		message = githubFactsDeadlineMessage
+	}
+	writeError(w, http.StatusBadGateway, "GITHUB_FACTS_UNAVAILABLE", message)
 }
 
 type publicProject struct {
