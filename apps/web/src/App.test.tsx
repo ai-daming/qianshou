@@ -159,6 +159,23 @@ describe("truthful dependency and failure states", () => {
     expect(screen.queryByText("当前 Scope 没有 Issue")).not.toBeInTheDocument();
   });
 
+  it("preserves a plain-text request failure instead of replacing it with a fallback", async () => {
+    const facts = makeFacts({
+      listMilestoneIssues: vi.fn(async () => {
+        throw "proxy error: connect ECONNREFUSED 127.0.0.1:41727";
+      }),
+    });
+    const user = userEvent.setup();
+    renderApp(facts);
+
+    await chooseProject(user, "qianshou");
+    await chooseMilestone(user, 1);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("proxy error: connect ECONNREFUSED 127.0.0.1:41727");
+    expect(alert).not.toHaveTextContent("读取当前事实失败。");
+  });
+
   it("distinguishes a verified empty response from a request failure", async () => {
     const facts = makeFacts({
       listMilestoneIssues: vi.fn(async (projectId, milestoneNumber) => ({

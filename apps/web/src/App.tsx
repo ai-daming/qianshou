@@ -13,6 +13,7 @@ function issueIdentity(projectId: string, issueNumber: number) {
 
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
   if (typeof error !== "object" || error === null) return "读取当前事实失败。";
 
   const candidate = error as {
