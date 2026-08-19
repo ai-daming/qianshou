@@ -10,8 +10,19 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@qianshou/core": "workspace:*",
-    "dompurify": "^3.4.13",
-    "marked": "^18.0.9"
+    "@qianshou/api-client": "workspace:*",
+    "@tanstack/react-query": "^5.101.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^30.0.1"
   }
 }
