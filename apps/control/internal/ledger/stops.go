@@ -33,6 +33,21 @@ type NewStopCondition struct {
 	EvidenceJSON string
 }
 
+const (
+	StopContinue         = "CONTINUE"
+	StopAdoptNewBaseline = "ADOPT_NEW_BASELINE"
+	StopRepair           = "REPAIR"
+	StopReReview         = "REREVIEW"
+	StopSplit            = "SPLIT"
+	StopSupersede        = "SUPERSEDE"
+	StopAbandon          = "ABANDON"
+)
+
+var stopResolutions = map[string]bool{
+	StopContinue: true, StopAdoptNewBaseline: true, StopRepair: true, StopReReview: true,
+	StopSplit: true, StopSupersede: true, StopAbandon: true,
+}
+
 func (s *Store) OpenStopCondition(ctx context.Context, input NewStopCondition) (StopCondition, error) {
 	evidence, err := canonicalJSON("stop evidence", input.EvidenceJSON)
 	if err != nil {
@@ -70,8 +85,8 @@ func (s *Store) OpenStopCondition(ctx context.Context, input NewStopCondition) (
 
 func (s *Store) ResolveStopCondition(ctx context.Context, id, resolution, outcomeJSON string) (StopCondition, error) {
 	resolution = strings.TrimSpace(resolution)
-	if resolution == "" {
-		return StopCondition{}, fmt.Errorf("stop resolution is required: %w", ErrInvariant)
+	if !stopResolutions[resolution] {
+		return StopCondition{}, fmt.Errorf("stop resolution is unsupported: %w", ErrInvariant)
 	}
 	outcome, err := canonicalJSON("stop outcome", outcomeJSON)
 	if err != nil {

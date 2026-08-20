@@ -59,15 +59,18 @@ func TestStopConditionResolutionIsOneShotAndIdempotent(t *testing.T) {
 	if err != nil || !stop.Open() {
 		t.Fatalf("OpenStopCondition = %+v, %v", stop, err)
 	}
-	resolved, err := store.ResolveStopCondition(ctx, stop.ID, "ADOPTED", `{"baselineId":"baseline-1"}`)
+	if _, err := store.ResolveStopCondition(ctx, stop.ID, "WHATEVER", `{}`); !errors.Is(err, ErrInvariant) {
+		t.Fatalf("unsupported resolution error = %v", err)
+	}
+	resolved, err := store.ResolveStopCondition(ctx, stop.ID, StopAdoptNewBaseline, `{"baselineId":"baseline-1"}`)
 	if err != nil || resolved.Open() {
 		t.Fatalf("ResolveStopCondition = %+v, %v", resolved, err)
 	}
-	retry, err := store.ResolveStopCondition(ctx, stop.ID, "ADOPTED", `{"baselineId":"baseline-1"}`)
+	retry, err := store.ResolveStopCondition(ctx, stop.ID, StopAdoptNewBaseline, `{"baselineId":"baseline-1"}`)
 	if err != nil || retry.ResolvedAt == nil {
 		t.Fatalf("resolution retry = %+v, %v", retry, err)
 	}
-	if _, err := store.ResolveStopCondition(ctx, stop.ID, "REJECTED", `{}`); !errors.Is(err, ErrConflict) {
+	if _, err := store.ResolveStopCondition(ctx, stop.ID, StopContinue, `{}`); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed resolution error = %v", err)
 	}
 }

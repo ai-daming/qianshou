@@ -13,7 +13,7 @@ A Discussion conclusion may propose an Issue, relationship, Milestone, PR, or me
 The Qianshou governance profile distinguishes:
 
 1. **Adopted development brief** — human-approved objective, decisions, Acceptance Criteria, Non-goals, constraints, and open questions.
-2. **DeliveryBaseline** — frozen Issue body and metadata plus the adopted brief, resolved repository and Issue DoD, source versions, and adoption metadata.
+2. **DeliveryBaseline** — frozen Issue body and metadata plus the adopted brief, Issue-specific DoD, source versions, and adoption metadata. It does not contain a Project Policy or Project-level DoD; repository instructions remain in `AGENTS.md` at the relevant Git SHA.
 3. **Execution package** — the baseline plus verified repository, integration base, workspace, permitted mutations, evidence requirements, and open Stop Conditions.
 
 The baseline is historical evidence of the accepted target. It is not an editable replacement for the current GitHub Issue.
@@ -55,6 +55,6 @@ For `UNAVAILABLE` or `CONFLICTING`, stop scope-affecting writes. For `NONE_VERIF
 
 ## Review invalidation
 
-Independent Review evaluates the frozen Issue body, adopted brief, resolved DoD, repository instructions, current PR diff, and checks. Bind every Review verdict to the inspected PR head SHA.
+Independent Review evaluates the frozen Issue body, adopted brief, frozen Issue-specific DoD, repository instructions read at the inspected head, current PR diff, and checks. Bind every Review verdict to the inspected PR head SHA.
 
 If the PR head changes after approval, the old approval no longer unlocks integration. Refresh the PR and require another independent Review. Never treat an Agent's completion statement, commit creation, or prior approval against another SHA as current completion evidence.

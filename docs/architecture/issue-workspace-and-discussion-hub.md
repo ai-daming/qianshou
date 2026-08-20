@@ -133,7 +133,7 @@ Creating or modifying GitHub Issues, relationships, Milestones, PRs, or merges r
 Discussion and delivery preparation produce three explicit artifacts:
 
 1. **Adopted Development Brief** — the human-approved implementation input: objective, decisions, acceptance criteria, non-goals, constraints, and open questions.
-2. **DeliveryBaseline** — the frozen Issue body plus the adopted brief, resolved Project and Issue DoD, source versions, and adoption metadata.
+2. **DeliveryBaseline** — the frozen Issue body plus the adopted brief, Issue-specific DoD, source versions, and adoption metadata. It contains no Project Policy or Project-level DoD; repository instructions are read from `AGENTS.md` at the Git SHA being acted on.
 3. **Execution Package** — the DeliveryBaseline plus verified repository, integration base, workspace, permitted mutations, evidence requirements, and Stop Conditions.
 
 If discussion changes requirements materially, Qianshou adopts a new brief version and freezes a new DeliveryBaseline. Existing implementation output is not silently reinterpreted against the new baseline. The existing Track must be explicitly continued, abandoned, or superseded through Discussion.

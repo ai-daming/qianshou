@@ -114,7 +114,8 @@ func seedBenchmarkRun(b *testing.B) (*Store, string) {
 	if err := store.EnsureWorkItem(ctx, project.ID, 1); err != nil {
 		b.Fatal(err)
 	}
-	brief, err := store.CreateBriefVersion(ctx, NewBriefVersion{ID: "brief", ProjectID: project.ID, IssueNumber: 1, Content: "benchmark"})
+	brief, err := store.CreateBriefVersion(ctx, NewBriefVersion{ID: "brief", ProjectID: project.ID, IssueNumber: 1, Content: "benchmark",
+		SourceIssueUpdatedAt: "v1", SourceIssueBodySHA256: sha256Text("body")})
 	if err != nil {
 		b.Fatal(err)
 	}

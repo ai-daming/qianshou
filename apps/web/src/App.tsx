@@ -1,7 +1,13 @@
-import type { DependencyJudgment, Issue } from "@qianshou/api-client";
-import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import type {
+  Criterion,
+  DependencyJudgment,
+  Issue,
+  ResolveStopConditionRequest,
+} from "@qianshou/api-client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useEffect, useState } from "react";
 import type { FactsClient } from "./facts.js";
+import type { WorkflowClient } from "./workflow.js";
 
 type Scope = { type: "milestone"; number: number } | { type: "issue"; number: number };
 
@@ -88,7 +94,511 @@ function ScopeError({ error }: { error: unknown }) {
   );
 }
 
-export function App({ facts }: { facts: FactsClient }) {
+let actionSequence = 0;
+
+function actionKey(prefix: string) {
+  actionSequence += 1;
+  return `${prefix}-${Date.now()}-${actionSequence}`;
+}
+
+function terminalResult(value: unknown) {
+  if (typeof value !== "object" || value === null) return null;
+  const result = (value as { result?: unknown }).result;
+  return typeof result === "string" ? result : null;
+}
+
+function IssueWorkbench({
+  projectId,
+  issueNumber,
+  workflow,
+}: {
+  projectId: string;
+  issueNumber: number;
+  workflow: WorkflowClient;
+}) {
+  const queryClient = useQueryClient();
+  const queryKey = ["projects", projectId, "issues", issueNumber, "workspace"] as const;
+  const workspaceQuery = useQuery({
+    queryKey,
+    queryFn: () => workflow.getWorkspace(projectId, issueNumber),
+    refetchInterval: (query) =>
+      query.state.data?.runs.some((run) => run.state === "QUEUED" || run.state === "RUNNING")
+        ? 1000
+        : false,
+  });
+  const workspace = workspaceQuery.data;
+  const [mainCheckoutPath, setMainCheckoutPath] = useState("");
+  const [engineId, setEngineId] = useState("");
+  const [conversationId, setConversationId] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [briefContent, setBriefContent] = useState("");
+  const [briefVersionId, setBriefVersionId] = useState("");
+  const [issueDoDText, setIssueDoDText] = useState("[]");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [bindingNote, setBindingNote] = useState<string | null>(null);
+  const [stopResolutions, setStopResolutions] = useState<
+    Record<string, ResolveStopConditionRequest["resolution"]>
+  >({});
+  const [stopOutcomes, setStopOutcomes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!workspace) return;
+    if (!engineId && workspace.engines[0]) setEngineId(workspace.engines[0].id);
+    if (!conversationId && workspace.conversations[0]) {
+      setConversationId(workspace.conversations[0].id);
+    }
+    const draft = workspace.briefVersions.find((brief) => brief.status === "DRAFT");
+    if (!briefVersionId && draft) setBriefVersionId(draft.id);
+  }, [workspace, engineId, conversationId, briefVersionId]);
+
+  async function refreshWorkspace() {
+    await queryClient.invalidateQueries({ queryKey });
+  }
+
+  const bindingMutation = useMutation({
+    mutationFn: () => workflow.establishBinding(projectId, mainCheckoutPath),
+    onSuccess: async () => {
+      setBindingNote("main checkout 已验证并绑定。后续每次运行仍会重新校验。");
+      setActionError(null);
+      await refreshWorkspace();
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+  const conversationMutation = useMutation({
+    mutationFn: () =>
+      workflow.createConversation(projectId, issueNumber, {
+        engineId,
+        idempotencyKey: actionKey("conversation"),
+      }),
+    onSuccess: async (conversation) => {
+      setConversationId(conversation.id);
+      setActionError(null);
+      await refreshWorkspace();
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+  const runMutation = useMutation({
+    mutationFn: () =>
+      workflow.startRun(projectId, issueNumber, conversationId, {
+        prompt,
+        idempotencyKey: actionKey("turn"),
+      }),
+    onSuccess: async () => {
+      setPrompt("");
+      setActionError(null);
+      await refreshWorkspace();
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (runId: string) => workflow.cancelRun(projectId, issueNumber, runId),
+    onSuccess: async () => {
+      setActionError(null);
+      await refreshWorkspace();
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+  const briefMutation = useMutation({
+    mutationFn: (content: string) => {
+      if (!workspace?.issue?.updatedAt || !workspace.currentIssueBodySha256) {
+        throw new Error("当前 GitHub Issue 证据不可用，不能冻结 BriefVersion。");
+      }
+      return workflow.createBrief(projectId, issueNumber, {
+        content,
+        sourceConversationId: conversationId,
+        idempotencyKey: actionKey("brief"),
+        expectedIssueUpdatedAt: workspace.issue.updatedAt,
+        expectedIssueBodySha256: workspace.currentIssueBodySha256,
+      });
+    },
+    onSuccess: async (brief) => {
+      setBriefVersionId(brief.id);
+      setActionError(null);
+      await refreshWorkspace();
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+  const adoptionMutation = useMutation({
+    mutationFn: () => {
+      if (!workspace?.issue?.updatedAt || !workspace.currentIssueBodySha256) {
+        throw new Error("当前 GitHub Issue 证据不可用，不能采用 DeliveryBaseline。");
+      }
+      let issueDoD: Criterion[];
+      try {
+        const parsed = JSON.parse(issueDoDText) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("not an array");
+        issueDoD = parsed as Criterion[];
+      } catch {
+        throw new Error("Issue DoD 必须是结构化 JSON 数组。");
+      }
+      return workflow.adoptBaseline(projectId, issueNumber, {
+        briefVersionId,
+        adoptionKey: actionKey("adoption"),
+        expectedIssueUpdatedAt: workspace.issue.updatedAt,
+        expectedIssueBodySha256: workspace.currentIssueBodySha256,
+        issueDoD,
+      });
+    },
+    onSuccess: async () => {
+      setActionError(null);
+      await refreshWorkspace();
+    },
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+  const resolveMutation = useMutation({
+    mutationFn: ({
+      stopId,
+      resolution,
+      note,
+    }: {
+      stopId: string;
+      resolution: ResolveStopConditionRequest["resolution"];
+      note: string;
+    }) =>
+      workflow.resolveStop(projectId, issueNumber, stopId, {
+        resolution,
+        outcome: { note },
+      }),
+    onSuccess: refreshWorkspace,
+    onError: (error) => setActionError(errorMessage(error)),
+  });
+
+  const selectedRun = workspace?.runs.filter((run) => run.conversationId === conversationId).at(-1);
+  const selectedBrief = workspace?.briefVersions.find((brief) => brief.id === briefVersionId);
+  const eventsQuery = useQuery({
+    queryKey: ["projects", projectId, "issues", issueNumber, "runs", selectedRun?.id, "events"],
+    queryFn: () => {
+      if (!selectedRun) throw new Error("Run 缺失。");
+      return workflow.listRunEvents(projectId, issueNumber, selectedRun.id, 0, 1000);
+    },
+    enabled: Boolean(selectedRun),
+    refetchInterval:
+      selectedRun?.state === "QUEUED" || selectedRun?.state === "RUNNING" ? 1000 : false,
+  });
+
+  if (workspaceQuery.isPending) {
+    return (
+      <section className="loading-state workbench-loading">
+        <span />
+        <p>正在重建 Discussion 与 DeliveryBaseline 证据…</p>
+      </section>
+    );
+  }
+  if (workspaceQuery.isError) return <ScopeError error={workspaceQuery.error} />;
+  if (!workspace) return null;
+
+  return (
+    <section className="workbench" aria-label="Discussion 与 DeliveryBaseline 工作台">
+      <header className="workbench-title">
+        <div>
+          <span className="eyebrow">03 / ISSUE WORKSPACE</span>
+          <h2>Discussion 始终开放</h2>
+          <p>讨论可以持续；只有你明确采用 BriefVersion 后，交付基线才会冻结。</p>
+        </div>
+        <span className={`evidence-state evidence-${workspace.githubStatus.toLowerCase()}`}>
+          GITHUB · {workspace.githubStatus}
+        </span>
+      </header>
+
+      {workspace.blockedReasons.map((reason) => (
+        <div className="workbench-alert" role="alert" key={reason.code}>
+          <strong>{reason.code}</strong>
+          <span>{reason.message}</span>
+        </div>
+      ))}
+      {workspace.delivery.deliveryPaused ? (
+        <div className="workbench-alert pause-alert" role="alert">
+          <strong>交付已暂停</strong>
+          <span>Discussion 仍可使用；先处理下面的 StopCondition，再恢复交付动作。</span>
+        </div>
+      ) : null}
+      {actionError ? (
+        <div className="workbench-alert" role="alert">
+          <strong>动作未完成</strong>
+          <span>{actionError}</span>
+        </div>
+      ) : null}
+
+      <div className="workbench-grid">
+        <section className="workbench-card discussion-card">
+          <div className="card-index">A / DISCUSS</div>
+          <h3>持续对话</h3>
+          <p>
+            每个 Conversation 固定一个 Engine。切换 Engine 会新建 Conversation，不伪造会话迁移。
+          </p>
+
+          <details className="binding-disclosure">
+            <summary>首次绑定本机 main checkout</summary>
+            <label className="field compact-field">
+              <span>Main checkout 绝对路径</span>
+              <input
+                value={mainCheckoutPath}
+                onChange={(event) => setMainCheckoutPath(event.target.value)}
+                placeholder="/Users/operator/work/qianshou"
+              />
+            </label>
+            <button
+              className="secondary-action"
+              type="button"
+              disabled={!mainCheckoutPath || bindingMutation.isPending}
+              onClick={() => bindingMutation.mutate()}
+            >
+              验证并绑定
+            </button>
+            {bindingNote ? <p className="binding-note">{bindingNote}</p> : null}
+          </details>
+
+          <div className="inline-controls">
+            <label>
+              <span>Engine</span>
+              <select value={engineId} onChange={(event) => setEngineId(event.target.value)}>
+                {workspace.engines.map((engine) => (
+                  <option value={engine.id} key={engine.id}>
+                    {engine.id} · {engine.adapter}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary-action"
+              type="button"
+              disabled={!engineId || conversationMutation.isPending}
+              onClick={() => conversationMutation.mutate()}
+            >
+              新建 Discussion
+            </button>
+          </div>
+
+          {workspace.conversations.length > 0 ? (
+            <label className="field compact-field">
+              <span>Conversation</span>
+              <select
+                value={conversationId}
+                onChange={(event) => setConversationId(event.target.value)}
+              >
+                {workspace.conversations.map((conversation) => (
+                  <option value={conversation.id} key={conversation.id}>
+                    {conversation.engineId} · {conversation.status} · {conversation.id.slice(-8)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <p className="empty-copy">还没有 Discussion Conversation。</p>
+          )}
+
+          <label className="field compact-field">
+            <span>本轮讨论</span>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="继续澄清目标、约束、验收或风险…"
+            />
+          </label>
+          <button
+            className="primary-action"
+            type="button"
+            disabled={!conversationId || !prompt.trim() || runMutation.isPending}
+            onClick={() => runMutation.mutate()}
+          >
+            继续对话
+          </button>
+
+          {selectedRun ? (
+            <div className="run-strip">
+              <span>{selectedRun.state}</span>
+              <code>{selectedRun.id}</code>
+              {terminalResult(selectedRun.terminalDetail) ? (
+                <>
+                  <p>{terminalResult(selectedRun.terminalDetail)}</p>
+                  <button
+                    className="text-action"
+                    type="button"
+                    disabled={briefMutation.isPending}
+                    onClick={() =>
+                      briefMutation.mutate(terminalResult(selectedRun.terminalDetail) ?? "")
+                    }
+                  >
+                    生成 BriefVersion
+                  </button>
+                </>
+              ) : null}
+              {selectedRun.state === "RUNNING" ? (
+                <button
+                  className="danger-action"
+                  type="button"
+                  disabled={cancelMutation.isPending}
+                  onClick={() => cancelMutation.mutate(selectedRun.id)}
+                >
+                  取消本轮运行
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {eventsQuery.data?.events.length ? (
+            <ol className="event-list">
+              {eventsQuery.data.events.map((event) => (
+                <li key={event.sequence}>
+                  <span>{event.kind}</span>
+                  <code>{JSON.stringify(event.payload)}</code>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </section>
+
+        <section className="workbench-card brief-card">
+          <div className="card-index">B / BRIEF</div>
+          <h3>冻结开发说明</h3>
+          <p>
+            BriefVersion 是不可变版本，并绑定生成时的 GitHub Issue 证据。旧 Brief 不能套用到新需求。
+          </p>
+          <label className="field compact-field">
+            <span>开发说明</span>
+            <textarea
+              className="brief-editor"
+              value={briefContent}
+              onChange={(event) => setBriefContent(event.target.value)}
+              placeholder="目标、决策、验收、Non-goals、约束与开放问题"
+            />
+          </label>
+          <button
+            className="secondary-action"
+            type="button"
+            disabled={!conversationId || !briefContent.trim() || briefMutation.isPending}
+            onClick={() => briefMutation.mutate(briefContent)}
+          >
+            冻结 BriefVersion
+          </button>
+          <div className="artifact-stack">
+            {workspace.briefVersions.map((brief) => (
+              <button
+                type="button"
+                className={`artifact ${brief.id === briefVersionId ? "artifact-selected" : ""}`}
+                key={brief.id}
+                onClick={() => {
+                  setBriefVersionId(brief.id);
+                  setBriefContent(brief.content);
+                }}
+              >
+                <span>{brief.status}</span>
+                <strong>{brief.content}</strong>
+                <code>{brief.contentSha256.slice(0, 12)}</code>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="workbench-card adoption-card">
+          <div className="card-index">C / ADOPT</div>
+          <h3>人工采用</h3>
+          <p>
+            这个动作会现场重读 GitHub，再冻结 Issue、BriefVersion 与 Issue-specific DoD。没有
+            Project Policy。
+          </p>
+          <label className="field compact-field">
+            <span>Issue-specific DoD（结构化 JSON 数组）</span>
+            <textarea
+              value={issueDoDText}
+              onChange={(event) => setIssueDoDText(event.target.value)}
+            />
+          </label>
+          <button
+            className="adopt-action"
+            type="button"
+            disabled={
+              !briefVersionId ||
+              selectedBrief?.status !== "DRAFT" ||
+              workspace.githubStatus !== "CURRENT" ||
+              adoptionMutation.isPending ||
+              workspace.delivery.deliveryPaused
+            }
+            onClick={() => adoptionMutation.mutate()}
+          >
+            采用为 DeliveryBaseline
+          </button>
+          <div className="baseline-stack">
+            {workspace.delivery.baselines.map((baseline) => (
+              <article key={baseline.id}>
+                <span>BASELINE · {baseline.sequence}</span>
+                <strong>{baseline.briefVersionId}</strong>
+                <code>{baseline.issueBodySha256.slice(0, 12)}</code>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      {workspace.stopConditions.length > 0 ? (
+        <section className="stop-board">
+          <span className="eyebrow">STOP CONDITIONS</span>
+          {workspace.stopConditions.map((stop) => (
+            <article key={stop.id}>
+              <div>
+                <strong>{stop.kind}</strong>
+                <p>{stop.reason}</p>
+              </div>
+              <span>{stop.state}</span>
+              {stop.state === "OPEN" ? (
+                <div className="stop-decision">
+                  <label>
+                    <span>处理结果</span>
+                    <select
+                      value={stopResolutions[stop.id] ?? "CONTINUE"}
+                      onChange={(event) =>
+                        setStopResolutions((current) => ({
+                          ...current,
+                          [stop.id]: event.target
+                            .value as ResolveStopConditionRequest["resolution"],
+                        }))
+                      }
+                    >
+                      <option value="CONTINUE">CONTINUE</option>
+                      <option value="ADOPT_NEW_BASELINE">ADOPT_NEW_BASELINE</option>
+                      <option value="REPAIR">REPAIR</option>
+                      <option value="REREVIEW">REREVIEW</option>
+                      <option value="SPLIT">SPLIT</option>
+                      <option value="SUPERSEDE">SUPERSEDE</option>
+                      <option value="ABANDON">ABANDON</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>处理说明</span>
+                    <input
+                      value={stopOutcomes[stop.id] ?? ""}
+                      onChange={(event) =>
+                        setStopOutcomes((current) => ({
+                          ...current,
+                          [stop.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="记录决定依据或恢复结果"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={resolveMutation.isPending || !(stopOutcomes[stop.id] ?? "").trim()}
+                    onClick={() =>
+                      resolveMutation.mutate({
+                        stopId: stop.id,
+                        resolution: stopResolutions[stop.id] ?? "CONTINUE",
+                        note: stopOutcomes[stop.id] ?? "",
+                      })
+                    }
+                  >
+                    记录处理决定
+                  </button>
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </section>
+      ) : null}
+    </section>
+  );
+}
+
+export function App({ facts, workflow }: { facts: FactsClient; workflow: WorkflowClient }) {
   const [projectId, setProjectId] = useState("");
   const [scope, setScope] = useState<Scope | null>(null);
   const [issueInput, setIssueInput] = useState("");
@@ -171,7 +681,7 @@ export function App({ facts }: { facts: FactsClient }) {
         </a>
         <div className="topbar-status">
           <span className="live-dot" />
-          READ ONLY · GITHUB LIVE
+          LOOPBACK · EXPLICIT ACTIONS
         </div>
       </header>
 
@@ -200,7 +710,7 @@ export function App({ facts }: { facts: FactsClient }) {
             <div className="repository-card">
               <span className="eyebrow">REPOSITORY</span>
               <strong>{selectedProject.repository.creationSlug}</strong>
-              <small>本机路径和凭据不会返回浏览器</small>
+              <small>凭据不会返回浏览器；路径只在你明确绑定时回显</small>
             </div>
           ) : null}
 
@@ -283,7 +793,7 @@ export function App({ facts }: { facts: FactsClient }) {
             <section className="empty-state">
               <span>PROJECT → SCOPE → FACTS</span>
               <h2>选择 Milestone，或按编号打开 Issue</h2>
-              <p>页面只展示当前 API 返回的 GitHub 事实，不保存 Scope，也不提供写操作。</p>
+              <p>Milestone 保持只读；按编号打开 Issue 后，才会出现需要明确点击的本机工作流动作。</p>
             </section>
           ) : null}
 
@@ -317,15 +827,24 @@ export function App({ facts }: { facts: FactsClient }) {
           ) : null}
 
           {scope && activeQuery.isSuccess && controlIssues.length <= 1 && issues.length > 0 ? (
-            <div className="issue-grid">
-              {issues.map((issue) => (
-                <IssueCard
-                  key={issueIdentity(projectId, issue.number)}
-                  issue={issue}
+            <>
+              <div className="issue-grid">
+                {issues.map((issue) => (
+                  <IssueCard
+                    key={issueIdentity(projectId, issue.number)}
+                    issue={issue}
+                    projectId={projectId}
+                  />
+                ))}
+              </div>
+              {scope.type === "issue" ? (
+                <IssueWorkbench
                   projectId={projectId}
+                  issueNumber={scope.number}
+                  workflow={workflow}
                 />
-              ))}
-            </div>
+              ) : null}
+            </>
           ) : null}
         </section>
       </main>

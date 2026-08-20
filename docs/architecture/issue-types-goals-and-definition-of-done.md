@@ -122,17 +122,13 @@ EXTERNAL_EVIDENCE
 
 An Agent must not mark a human or external criterion complete merely because code or tests pass.
 
-## Project and Issue Definition of Done
+## Issue Definition of Done and repository instructions
 
-The effective Definition of Done is composed rather than copied into every Issue:
+Qianshou does not define a Project-level DoD, Project Policy, policy version, or a composition algorithm that manufactures one effective checklist for every Issue. Most repository-wide expectations are execution instructions, not delivery artifacts. In an AI-operated repository they belong in the `AGENTS.md` files that govern the actual worktree or PR head being acted on.
 
-```text
-Resolved DoD = versioned Project default DoD + Issue-specific DoD
-```
+An Issue carries only the delivery-specific DoD that is necessary to decide whether that Issue is complete. Examples include a regression test, a migration check, a privacy inspection, or a production observation. The human confirms that Issue-owned list when adopting the development brief, and Qianshou freezes it as JSON in the DeliveryBaseline.
 
-The Project default covers repository-wide requirements such as test discipline, Review independence, target coverage, required documentation, merge policy, and cleanup. The Issue-specific section adds requirements unique to the work, such as a regression test, a data migration check, a privacy inspection, or production observation.
-
-The resolved list is frozen as JSON in the DeliveryBaseline. The current Project policy remains owned by its existing Git/repository source; no separate Project-policy table is introduced here. A later policy change must not silently reinterpret an in-flight DeliveryTrack; adopting a revised baseline is an explicit discussion decision.
+Repository instructions are not copied into that JSON and are not persisted as a Qianshou Project setting. Implementers read `AGENTS.md` from the assigned worktree. Reviewers and integration gates read it again at the exact Git head they inspect. This preserves the Git source and SHA without inventing another policy source. If instructions change in a way that affects in-flight work, the evidence conflict returns to Discussion; it is not silently resolved by choosing one source.
 
 ## DeliveryBaseline and DeliveryTrack boundary
 
@@ -140,7 +136,7 @@ For a `DELIVERY` Issue, clicking **Adopt development brief** is the business bou
 
 1. adopt one version of the development brief;
 2. snapshot the current GitHub Issue body and metadata needed to detect scope drift;
-3. resolve and freeze the Project and Issue DoD;
+3. validate and freeze the Issue-specific DoD confirmed in Discussion;
 4. create the new active DeliveryTrack;
 5. attach an already prepared Worktree when present, or leave Worktree preparation as the next legal action.
 
@@ -175,8 +171,8 @@ Review evaluates:
 ```text
 frozen Issue body
 + adopted development brief
-+ resolved DoD
-+ repository instructions
++ frozen Issue-specific DoD
++ repository instructions read at the inspected Git head
 + current PR diff and checks
 = Review verdict and criterion-by-criterion evidence
 ```

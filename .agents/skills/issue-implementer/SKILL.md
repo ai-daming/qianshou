@@ -1,13 +1,13 @@
 ---
 name: issue-implementer
-description: Implement one Qianshou-governed Delivery Issue in its assigned worktree and create or update its PR. Use when the derived stage is WORKTREE_READY or CHANGES_REQUESTED and the Agent receives a DeliveryBaseline, handoff package, integration base, scope, Acceptance Criteria, and resolved DoD.
+description: Implement one Qianshou-governed Delivery Issue in its assigned worktree and create or update its PR. Use when the derived stage is WORKTREE_READY or CHANGES_REQUESTED and the Agent receives a DeliveryBaseline, handoff package, integration base, scope, Acceptance Criteria, and Issue-specific DoD.
 ---
 
 # Issue Implementer
 
 ## Preconditions
 
-Require the exact repository, worktree, integration branch and base, frozen Issue body, adopted development brief, Acceptance Criteria, resolved DoD, and mutation boundary. Stop if any is missing or contradictory.
+Require the exact repository, worktree, integration branch and base, frozen Issue body, adopted development brief, Acceptance Criteria, Issue-specific DoD, and mutation boundary. Read repository instructions from the assigned worktree's `AGENTS.md`; never accept a copied Project Policy as a substitute. Stop if any required input is missing or contradictory.
 
 ## Workflow
 

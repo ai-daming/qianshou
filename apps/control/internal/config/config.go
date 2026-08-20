@@ -109,6 +109,12 @@ func (cfg Config) validate() error {
 		if strings.TrimSpace(engine.Adapter) == "" || strings.TrimSpace(engine.Command) == "" {
 			return fmt.Errorf("engine %q requires adapter and command", engine.ID)
 		}
+		switch strings.ToLower(strings.TrimSpace(engine.Adapter)) {
+		case "codex-cli":
+			return fmt.Errorf("engine %q adapter %q was renamed; update it to %q", engine.ID, engine.Adapter, "codex")
+		case "claude-code-cli":
+			return fmt.Errorf("engine %q adapter %q was renamed; update it to %q", engine.ID, engine.Adapter, "claude")
+		}
 		key := strings.ToLower(engine.ID)
 		if _, exists := engineIDs[key]; exists {
 			return fmt.Errorf("duplicate engine id %q", engine.ID)

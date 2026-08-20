@@ -7,7 +7,7 @@ description: Independently review one Qianshou delivery PR against its frozen De
 
 ## Preconditions
 
-Require the Issue reference, frozen Issue body, adopted development brief, resolved DoD, PR reference, current PR head SHA, intended base branch, repository/worktree, and implementer handoff evidence. Do not inherit the implementer's raw conversation history.
+Require the Issue reference, frozen Issue body, adopted development brief, Issue-specific DoD, PR reference, current PR head SHA, intended base branch, repository/worktree, and implementer handoff evidence. Read repository instructions independently from `AGENTS.md` at the current PR head; never accept a copied Project Policy as a substitute. Do not inherit the implementer's raw conversation history.
 
 ## Workflow
 

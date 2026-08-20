@@ -288,10 +288,10 @@ func TestSyntheticEventHasNoVendorFrameSource(t *testing.T) {
 	}
 }
 
-func TestRunEventCursorTraversesBeyondOneHundred(t *testing.T) {
+func TestRunEventCursorTraversesTenThousandWithoutLossOrDuplication(t *testing.T) {
 	store, run := seedRunningRun(t)
 	ctx := context.Background()
-	const total = 257
+	const total = 10_000
 	for i := 1; i <= total; i++ {
 		frame := NewVendorFrame{RunID: run.ID, Sequence: i, RawPayload: []byte(fmt.Sprintf("frame-%d", i)),
 			Channel: "stdout", ParseStatus: FrameParsed, NormalizerVersion: "v1"}
@@ -302,7 +302,7 @@ func TestRunEventCursorTraversesBeyondOneHundred(t *testing.T) {
 	var after int
 	var got []RunEvent
 	for {
-		page, err := store.ListRunEvents(ctx, run.ID, after, 37)
+		page, err := store.ListRunEvents(ctx, run.ID, after, 777)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,6 +314,11 @@ func TestRunEventCursorTraversesBeyondOneHundred(t *testing.T) {
 	}
 	if len(got) != total || got[0].Sequence != 1 || got[total-1].Sequence != total {
 		t.Fatalf("traversed %d events, first=%d last=%d", len(got), got[0].Sequence, got[len(got)-1].Sequence)
+	}
+	for index, event := range got {
+		if event.Sequence != index+1 {
+			t.Fatalf("event %d has sequence %d; cursor traversal lost or duplicated evidence", index, event.Sequence)
+		}
 	}
 }
 

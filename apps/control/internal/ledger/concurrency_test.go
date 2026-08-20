@@ -48,6 +48,83 @@ func TestConcurrentBaselineAppendsRemainGapFree(t *testing.T) {
 	}
 }
 
+func TestConcurrentInitialAdoptionCreatesOneActiveTrack(t *testing.T) {
+	t.Run("identical evidence is idempotent", func(t *testing.T) {
+		store := openTestStore(t)
+		seed := seedThroughBrief(t, store)
+		track := NewTrack{ID: "track-1", ProjectID: seed.project.ID, IssueNumber: seed.issueNumber}
+		baseline := NewBaseline{ID: "baseline-1", AdoptionKey: "adopt-1", BriefVersionID: seed.brief.ID,
+			IssueUpdatedAt: "v1", IssueBody: "body", ResolvedDoDJSON: `[]`}
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, _, err := store.StartTrack(context.Background(), track, baseline)
+				errs <- err
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("identical concurrent adoption failed: %v", err)
+			}
+		}
+		workspace, err := store.GetIssueWorkspace(context.Background(), seed.project.ID, seed.issueNumber)
+		if err != nil || workspace.ActiveTrack == nil || len(workspace.Baselines) != 1 {
+			t.Fatalf("workspace = %+v, %v", workspace, err)
+		}
+	})
+
+	t.Run("different evidence cannot create competing active tracks", func(t *testing.T) {
+		store := openTestStore(t)
+		seed := seedThroughBrief(t, store)
+		track := NewTrack{ID: "track-1", ProjectID: seed.project.ID, IssueNumber: seed.issueNumber}
+		baselines := []NewBaseline{
+			{ID: "baseline-1", AdoptionKey: "adopt-1", BriefVersionID: seed.brief.ID, IssueUpdatedAt: "v1", IssueBody: "one", ResolvedDoDJSON: `[]`},
+			{ID: "baseline-2", AdoptionKey: "adopt-2", BriefVersionID: seed.brief.ID, IssueUpdatedAt: "v2", IssueBody: "two", ResolvedDoDJSON: `[]`},
+		}
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for _, input := range baselines {
+			wg.Add(1)
+			go func(value NewBaseline) {
+				defer wg.Done()
+				<-start
+				_, _, err := store.StartTrack(context.Background(), track, value)
+				errs <- err
+			}(input)
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		successes, conflicts := 0, 0
+		for err := range errs {
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrConflict):
+				conflicts++
+			default:
+				t.Fatalf("unexpected concurrent adoption error: %v", err)
+			}
+		}
+		if successes != 1 || conflicts != 1 {
+			t.Fatalf("successes=%d conflicts=%d", successes, conflicts)
+		}
+		workspace, err := store.GetIssueWorkspace(context.Background(), seed.project.ID, seed.issueNumber)
+		if err != nil || workspace.ActiveTrack == nil || len(workspace.Baselines) != 1 {
+			t.Fatalf("workspace = %+v, %v", workspace, err)
+		}
+	})
+}
+
 func TestConcurrentCommandKeyRetryIsIdempotent(t *testing.T) {
 	store := openTestStore(t)
 	seed := seedTrack(t, store, "track-1")
@@ -152,7 +229,7 @@ func TestConcurrentStopResolutionWithSameOutcomeIsIdempotent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := store.ResolveStopCondition(context.Background(), stop.ID, "ADOPTED", `{"ok":true}`)
+			_, err := store.ResolveStopCondition(context.Background(), stop.ID, StopContinue, `{"ok":true}`)
 			errs <- err
 		}()
 	}

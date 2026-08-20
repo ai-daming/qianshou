@@ -145,12 +145,14 @@ The strict machine-local configuration contains only the embedded Runner's execu
     "allowedRoots": ["/Users/operator/work"]
   },
   "engines": [
-    {"id": "codex", "adapter": "codex-cli", "command": "codex"}
+    {"id": "codex", "adapter": "codex", "command": "codex"}
   ]
 }
 ```
 
 Unknown fields are errors. In particular, `projects`, `scopes`, `landing`, GitHub facts, and credentials are not accepted. Remote Server locator and Runner credential transport join this local trust contract only with the M2 authenticated remote protocol.
+
+Configs created before the M1 adapter names were finalized must replace `codex-cli` with `codex` and `claude-code-cli` with `claude`. Startup rejects either legacy value with the exact replacement instead of failing later when a Discussion starts.
 
 ## Scope and Landing
 
