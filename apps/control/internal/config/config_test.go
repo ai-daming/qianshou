@@ -20,7 +20,7 @@ func TestLoadV1ContainsOnlyRunnerExecutionTrust(t *testing.T) {
 	path := writeConfig(t, `{
   "version": 1,
   "runner": {"id":"runner-1","allowedRoots":["/Users/operator/work","/tmp/qianshou-tests"]},
-  "engines": [{"id":"codex","adapter":"codex-cli","command":"codex"}]
+  "engines": [{"id":"codex","adapter":"codex","command":"codex"}]
 }`)
 	got, err := Load(path)
 	if err != nil {
@@ -28,6 +28,25 @@ func TestLoadV1ContainsOnlyRunnerExecutionTrust(t *testing.T) {
 	}
 	if got.Runner.ID != "runner-1" || len(got.Runner.AllowedRoots) != 2 || len(got.Engines) != 1 {
 		t.Fatalf("Config = %+v", got)
+	}
+}
+
+func TestLoadRejectsLegacyAdaptersWithMigrationInstruction(t *testing.T) {
+	tests := []struct {
+		legacy  string
+		current string
+	}{
+		{legacy: "codex-cli", current: "codex"},
+		{legacy: "claude-code-cli", current: "claude"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.legacy, func(t *testing.T) {
+			path := writeConfig(t, `{"version":1,"runner":{"id":"runner-1","allowedRoots":["/tmp"]},"engines":[{"id":"agent","adapter":"`+tc.legacy+`","command":"agent"}]}`)
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), tc.legacy) || !strings.Contains(err.Error(), tc.current) || !strings.Contains(strings.ToLower(err.Error()), "update") {
+				t.Fatalf("Load error = %v, want migration from %q to %q", err, tc.legacy, tc.current)
+			}
+		})
 	}
 }
 

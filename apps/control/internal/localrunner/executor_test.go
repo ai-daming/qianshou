@@ -207,16 +207,20 @@ sleep 30
 func TestExecutionArgumentsRespectRoleAndResumeBoundaries(t *testing.T) {
 	tests := []struct {
 		request ExecuteRequest
-		want    string
+		wants   []string
 	}{
-		{request: ExecuteRequest{Engine: config.Engine{Adapter: "codex"}, CWD: "/work", Role: ledger.RoleImplementation}, want: "workspace-write"},
-		{request: ExecuteRequest{Engine: config.Engine{Adapter: "codex"}, SessionID: "thread"}, want: "resume --json thread"},
-		{request: ExecuteRequest{Engine: config.Engine{Adapter: "claude"}, Role: ledger.RoleRepair}, want: "acceptEdits"},
+		{request: ExecuteRequest{Engine: config.Engine{Adapter: "codex"}, CWD: "/work", Role: ledger.RoleImplementation}, wants: []string{"workspace-write"}},
+		{request: ExecuteRequest{Engine: config.Engine{Adapter: "codex"}, SessionID: "thread", Role: ledger.RoleDiscussion}, wants: []string{"resume --json", `sandbox_mode="read-only"`, "thread -"}},
+		{request: ExecuteRequest{Engine: config.Engine{Adapter: "codex"}, SessionID: "thread", Role: ledger.RoleRepair}, wants: []string{"resume --json", `sandbox_mode="workspace-write"`, "thread -"}},
+		{request: ExecuteRequest{Engine: config.Engine{Adapter: "claude"}, Role: ledger.RoleRepair}, wants: []string{"acceptEdits"}},
 	}
 	for _, tc := range tests {
 		args, err := executionArgs(tc.request)
-		if err != nil || !strings.Contains(strings.Join(args, " "), tc.want) {
-			t.Fatalf("args = %v, err = %v, want %q", args, err, tc.want)
+		joined := strings.Join(args, " ")
+		for _, want := range tc.wants {
+			if err != nil || !strings.Contains(joined, want) {
+				t.Fatalf("args = %v, err = %v, want %q", args, err, want)
+			}
 		}
 	}
 	if Cancelled := NewCLIExecutor().Cancel("missing"); Cancelled {

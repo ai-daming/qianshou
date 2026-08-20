@@ -211,12 +211,12 @@ func executionArgs(request ExecuteRequest) ([]string, error) {
 		}
 		return append(args, "--output-format", "stream-json", "--verbose", "--permission-mode", mode), nil
 	case "codex":
-		if request.SessionID != "" {
-			return []string{"exec", "resume", "--json", request.SessionID, "-"}, nil
-		}
 		sandbox := "read-only"
 		if request.Role == ledger.RoleImplementation || request.Role == ledger.RoleRepair {
 			sandbox = "workspace-write"
+		}
+		if request.SessionID != "" {
+			return []string{"exec", "resume", "--json", "--config", fmt.Sprintf(`sandbox_mode=%q`, sandbox), request.SessionID, "-"}, nil
 		}
 		return []string{"exec", "--json", "--sandbox", sandbox, "-C", request.CWD, "-"}, nil
 	default:
