@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-daming/qianshou/apps/control/internal/capability"
 	"github.com/ai-daming/qianshou/apps/control/internal/config"
 	"github.com/ai-daming/qianshou/apps/control/internal/githubapi"
 	"github.com/ai-daming/qianshou/apps/control/internal/ledger"
@@ -160,6 +161,41 @@ func TestDiscussionBriefAdoptionDriftFlow(t *testing.T) {
 	if retry.Code != http.StatusOK {
 		t.Fatalf("idempotent adoption = %d %s", retry.Code, retry.Body.String())
 	}
+	authority := getJSON(t, h, "/api/v1/projects/qianshou/issues/6/workspace", nil)
+	var authorityBody struct {
+		DerivedStage    *string  `json:"derivedStage"`
+		AllowedActions  []string `json:"allowedActions"`
+		EvidenceSources []struct {
+			Source     string `json:"source"`
+			State      string `json:"state"`
+			ObservedAt string `json:"observedAt"`
+		} `json:"evidenceSources"`
+		BlockedReasons []struct {
+			Code   string `json:"code"`
+			Source string `json:"source"`
+		} `json:"blockedReasons"`
+	}
+	decodeResponse(t, authority, &authorityBody)
+	if authorityBody.DerivedStage == nil || *authorityBody.DerivedStage != "WAITING_FOR_WORKTREE" ||
+		!containsString(authorityBody.AllowedActions, "CREATE_WORKTREE") {
+		t.Fatalf("authoritative workspace = %+v\n%s", authorityBody, authority.Body.String())
+	}
+	if !completeEvidenceSource(authorityBody.EvidenceSources, "LEDGER") ||
+		!completeEvidenceSource(authorityBody.EvidenceSources, "GITHUB") ||
+		!completeEvidenceSource(authorityBody.EvidenceSources, "GIT") ||
+		!completeEvidenceSource(authorityBody.EvidenceSources, "RUNNER") {
+		t.Fatalf("evidence sources = %+v", authorityBody.EvidenceSources)
+	}
+
+	facts.issue.Dependency = githubapi.Dependency{Status: githubapi.DependencyError,
+		Error: &githubapi.DependencyErrorDetail{Code: "DEPENDENCY_FACTS_UNAVAILABLE", Message: "dependency node missing"}}
+	incomplete := getJSON(t, h, "/api/v1/projects/qianshou/issues/6/workspace", nil)
+	decodeResponse(t, incomplete, &authorityBody)
+	if authorityBody.DerivedStage != nil || containsString(authorityBody.AllowedActions, "CREATE_WORKTREE") ||
+		!hasPublicReason(authorityBody.BlockedReasons, "GITHUB_FACTS_MISSING", "GITHUB") {
+		t.Fatalf("incomplete dependency evidence did not fail closed: %+v\n%s", authorityBody, incomplete.Body.String())
+	}
+	facts.issue.Dependency = githubapi.Dependency{Status: githubapi.DependencyReady}
 	conflictingAdoption := postJSON(t, h, "/api/v1/projects/qianshou/issues/6/adoptions", `{"briefVersionId":`+jsonString(briefBody.ID)+`,"adoptionKey":"adopt-1","expectedIssueUpdatedAt":"2026-08-19T15:09:52Z","expectedIssueBodySha256":`+jsonString(testSHA("Goal v1"))+`,"issueDoD":[{"id":"D-1","description":"different","verificationMethod":"PR_REVIEW","requiredEvidence":"review","required":true}]}`)
 	if conflictingAdoption.Code != http.StatusConflict {
 		t.Fatalf("conflicting adoption = %d %s", conflictingAdoption.Code, conflictingAdoption.Body.String())
@@ -202,7 +238,10 @@ func TestDiscussionBriefAdoptionDriftFlow(t *testing.T) {
 	}
 	facts.err = context.DeadlineExceeded
 	unavailable := getJSON(t, h, "/api/v1/projects/qianshou/issues/6/workspace", nil)
-	if unavailable.Code != http.StatusOK || !strings.Contains(unavailable.Body.String(), `"githubStatus":"UNAVAILABLE"`) {
+	decodeResponse(t, unavailable, &authorityBody)
+	if unavailable.Code != http.StatusOK || authorityBody.DerivedStage != nil ||
+		!evidenceSourceHasState(authorityBody.EvidenceSources, "GITHUB", "UNAVAILABLE") ||
+		!hasPublicReason(authorityBody.BlockedReasons, "GITHUB_FACTS_UNAVAILABLE", "GITHUB") {
 		t.Fatalf("unavailable workspace = %d %s", unavailable.Code, unavailable.Body.String())
 	}
 	assertContract(http.MethodGet, "/api/v1/projects/qianshou/issues/6/workspace", unavailable)
@@ -508,6 +547,162 @@ func TestWorkflowHelperBoundaries(t *testing.T) {
 	}
 }
 
+func TestPartialTrackBindingIsContradictoryEvidence(t *testing.T) {
+	path := "/work/partial"
+	track := &ledger.DeliveryTrack{WorkspacePath: &path}
+	present, complete := trackBindingState(track)
+	if !present || complete {
+		t.Fatalf("partial binding state = present %v complete %v", present, complete)
+	}
+	facts := ledgerCapabilityFacts(ledger.Project{RepositoryID: 101}, ledger.IssueWorkspace{ActiveTrack: track})
+	facts.CurrentBaselineID = "baseline-1"
+	facts.BaselineIssueUpdatedAt = "issue-v1"
+	input := capability.Input{Ledger: facts,
+		GitHub: capability.Evidence[capability.GitHubFacts]{State: capability.EvidenceComplete,
+			Value: &capability.GitHubFacts{RepositoryID: 101, IssueUpdatedAt: "issue-v1", IssueOpen: true, DependenciesReady: true}},
+		Git: capability.Evidence[capability.GitFacts]{State: capability.EvidenceComplete,
+			Value: &capability.GitFacts{WorktreePresent: true}},
+		Runner: capability.Evidence[capability.RunnerFacts]{State: capability.EvidenceComplete,
+			Value: &capability.RunnerFacts{Online: true, BindingAllowed: true, EngineAllowed: true}}}
+	got := capability.Derive(input)
+	if got.DerivedStage != nil || containsCapabilityAction(got.AllowedActions, capability.ActionStartImplementation) ||
+		!hasCapabilityReason(got.BlockedReasons, "LEDGER_INVARIANT_CONFLICT", capability.SourceLedger) {
+		t.Fatalf("partial Track binding did not fail closed: %+v", got)
+	}
+}
+
+func TestWorkspaceReconciliationFailsClosedAcrossSourceBoundaries(t *testing.T) {
+	newRuntime := func(t *testing.T, withBinding bool) (*workflowRuntime, ledger.Project, ledger.IssueWorkspace, *fakeFacts, config.Config) {
+		t.Helper()
+		store := testCatalog(t)
+		addProject(t, store, "qianshou", 101, "ai-daming/qianshou")
+		root := t.TempDir()
+		checkout := filepath.Join(root, "qianshou")
+		initWorkflowRepository(t, checkout)
+		cfg := config.Config{Version: 1, Runner: config.Runner{ID: "runner-1", AllowedRoots: []string{root}},
+			Engines: []config.Engine{{ID: "codex", Adapter: "codex", Command: "codex"}}}
+		if withBinding {
+			if _, err := store.CreateRunner(t.Context(), ledger.NewRunner{ID: "runner-1", DisplayName: "runner"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.CreateRunnerProjectBinding(t.Context(), ledger.NewRunnerProjectBinding{ID: "binding-1",
+				RunnerID: "runner-1", ProjectID: "qianshou", MainCheckoutPath: checkout, RepositoryIDAtBinding: 101}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		facts := testFacts()
+		facts.issue = githubapi.Issue{Number: 7, Title: "Slice 1", State: "OPEN", Body: "Goal", UpdatedAt: "issue-v1",
+			Dependency: githubapi.Dependency{Status: githubapi.DependencyReady}}
+		workspace := ledger.IssueWorkspace{ActiveTrack: &ledger.DeliveryTrack{ID: "track-1"},
+			Baselines: []ledger.DeliveryBaseline{{ID: "baseline-1", IssueUpdatedAt: "issue-v1"}}}
+		return &workflowRuntime{store: store, facts: facts, config: cfg}, ledger.Project{ID: "qianshou", RepositoryID: 101}, workspace, facts, cfg
+	}
+
+	t.Run("repository identity contradiction", func(t *testing.T) {
+		runtime, project, workspace, facts, _ := newRuntime(t, false)
+		facts.repositories[101] = githubapi.Repository{ID: 999, NameWithOwner: "ai-daming/qianshou"}
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GITHUB_FACTS_CONFLICTING", capability.SourceGitHub) ||
+			!sourceKindHasState(got.EvidenceSources, "GITHUB", "ISSUE_AND_DEPENDENCIES", "CONFLICTING") {
+			t.Fatalf("repository contradiction = %+v", got)
+		}
+	})
+
+	t.Run("repository facts unavailable", func(t *testing.T) {
+		runtime, project, workspace, facts, _ := newRuntime(t, false)
+		facts.err = context.DeadlineExceeded
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GITHUB_FACTS_UNAVAILABLE", capability.SourceGitHub) ||
+			!sourceKindHasState(got.EvidenceSources, "GITHUB", "ISSUE_AND_DEPENDENCIES", "UNAVAILABLE") {
+			t.Fatalf("repository unavailable = %+v", got)
+		}
+	})
+
+	t.Run("Issue identity contradiction", func(t *testing.T) {
+		runtime, project, workspace, facts, _ := newRuntime(t, false)
+		facts.issue.Number = 8
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GITHUB_FACTS_CONFLICTING", capability.SourceGitHub) {
+			t.Fatalf("Issue contradiction = %+v", got)
+		}
+	})
+
+	t.Run("Issue version missing", func(t *testing.T) {
+		runtime, project, workspace, facts, _ := newRuntime(t, false)
+		facts.issue.UpdatedAt = ""
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GITHUB_FACTS_MISSING", capability.SourceGitHub) {
+			t.Fatalf("Issue version missing = %+v", got)
+		}
+	})
+
+	t.Run("dependency state contradiction", func(t *testing.T) {
+		runtime, project, workspace, facts, _ := newRuntime(t, false)
+		facts.issue.Dependency = githubapi.Dependency{Status: "UNKNOWN"}
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GITHUB_FACTS_CONFLICTING", capability.SourceGitHub) {
+			t.Fatalf("dependency contradiction = %+v", got)
+		}
+	})
+
+	t.Run("dependency evidence missing", func(t *testing.T) {
+		runtime, project, workspace, facts, _ := newRuntime(t, true)
+		facts.issue.Dependency = githubapi.Dependency{Status: githubapi.DependencyError}
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GITHUB_FACTS_MISSING", capability.SourceGitHub) ||
+			!sourceKindHasState(got.EvidenceSources, "GITHUB", "ISSUE_AND_DEPENDENCIES", "MISSING") {
+			t.Fatalf("dependency missing = %+v", got)
+		}
+	})
+
+	t.Run("main checkout trust contradiction", func(t *testing.T) {
+		runtime, project, workspace, _, cfg := newRuntime(t, true)
+		cfg.Runner.AllowedRoots = []string{t.TempDir()}
+		runtime.config = cfg
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GIT_FACTS_CONFLICTING", capability.SourceGit) ||
+			!sourceKindHasState(got.EvidenceSources, "RUNNER", "EMBEDDED_RUNNER", "CONFLICTING") {
+			t.Fatalf("trust contradiction = %+v", got)
+		}
+	})
+
+	t.Run("bound worktree facts not yet implemented", func(t *testing.T) {
+		runtime, project, workspace, _, _ := newRuntime(t, true)
+		workspace.ActiveTrack.RunnerProjectBindingID = testStringPointer("binding-1")
+		workspace.ActiveTrack.WorkspacePath = testStringPointer("/work/qianshou-7")
+		workspace.ActiveTrack.Branch = testStringPointer("issue-7")
+		workspace.ActiveTrack.BaseBranch = testStringPointer("main")
+		workspace.ActiveTrack.BaseSHAAtBinding = testStringPointer("base-sha")
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if !hasCapabilityReason(got.Result.BlockedReasons, "GIT_FACTS_MISSING", capability.SourceGit) ||
+			!sourceKindHasState(got.EvidenceSources, "GIT", "TRACK_WORKTREE", "MISSING") {
+			t.Fatalf("bound worktree gap = %+v", got)
+		}
+	})
+
+	t.Run("runner has no enabled engine", func(t *testing.T) {
+		runtime, project, workspace, _, cfg := newRuntime(t, true)
+		cfg.Engines = nil
+		runtime.config = cfg
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if containsCapabilityAction(got.Result.AllowedActions, capability.ActionCreateWorktree) ||
+			!hasCapabilityReason(got.Result.BlockedReasons, "RUNNER_PERMISSION_DENIED", capability.SourceRunner) {
+			t.Fatalf("disabled engine = %+v", got)
+		}
+	})
+
+	t.Run("runner identity missing", func(t *testing.T) {
+		runtime, project, workspace, _, cfg := newRuntime(t, false)
+		cfg.Runner.ID = ""
+		runtime.config = cfg
+		got := runtime.reconcileWorkspace(t.Context(), project, 7, workspace)
+		if containsCapabilityAction(got.Result.AllowedActions, capability.ActionCreateWorktree) ||
+			!hasCapabilityReason(got.Result.BlockedReasons, "RUNNER_UNAVAILABLE", capability.SourceRunner) {
+			t.Fatalf("runner identity missing = %+v", got)
+		}
+	})
+}
+
 func assertWorkflowError(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
 	t.Helper()
 	if response.Code != status || !strings.Contains(response.Body.String(), `"code":"`+code+`"`) {
@@ -535,6 +730,82 @@ func jsonString(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
 }
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func completeEvidenceSource(values []struct {
+	Source     string `json:"source"`
+	State      string `json:"state"`
+	ObservedAt string `json:"observedAt"`
+}, want string) bool {
+	for _, value := range values {
+		if value.Source == want && value.State == "COMPLETE" && value.ObservedAt != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceSourceHasState(values []struct {
+	Source     string `json:"source"`
+	State      string `json:"state"`
+	ObservedAt string `json:"observedAt"`
+}, source, state string) bool {
+	for _, value := range values {
+		if value.Source == source && value.State == state && value.ObservedAt != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPublicReason(values []struct {
+	Code   string `json:"code"`
+	Source string `json:"source"`
+}, code, source string) bool {
+	for _, value := range values {
+		if value.Code == code && value.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func containsCapabilityAction(values []capability.Action, want capability.Action) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCapabilityReason(values []capability.BlockedReason, code string, source capability.Source) bool {
+	for _, value := range values {
+		if value.Code == code && value.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceKindHasState(values []evidenceSource, source, kind, state string) bool {
+	for _, value := range values {
+		if string(value.Source) == source && value.Kind == kind && string(value.State) == state && value.ObservedAt != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func testStringPointer(value string) *string { return &value }
 
 func testSHA(value string) string {
 	digest := sha256.Sum256([]byte(value))

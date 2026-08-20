@@ -287,6 +287,15 @@ function IssueWorkbench({
   if (workspaceQuery.isError) return <ScopeError error={workspaceQuery.error} />;
   if (!workspace) return null;
 
+  const githubIssueEvidence = workspace.evidenceSources.find(
+    (source) => source.source === "GITHUB" && source.kind === "ISSUE_AND_DEPENDENCIES",
+  );
+  const primaryActions = workspace.allowedActions.filter(
+    (action) => !["VIEW_DISCUSSION", "START_DISCUSSION", "RESOLVE_STOP"].includes(action),
+  );
+  const discussionAllowed = workspace.allowedActions.includes("START_DISCUSSION");
+  const stopResolutionAllowed = workspace.allowedActions.includes("RESOLVE_STOP");
+
   return (
     <section className="workbench" aria-label="Discussion 与 DeliveryBaseline 工作台">
       <header className="workbench-title">
@@ -295,10 +304,41 @@ function IssueWorkbench({
           <h2>Discussion 始终开放</h2>
           <p>讨论可以持续；只有你明确采用 BriefVersion 后，交付基线才会冻结。</p>
         </div>
-        <span className={`evidence-state evidence-${workspace.githubStatus.toLowerCase()}`}>
-          GITHUB · {workspace.githubStatus}
+        <span
+          className={`evidence-state evidence-${(githubIssueEvidence?.state ?? "missing").toLowerCase()}`}
+        >
+          GITHUB · {githubIssueEvidence?.state ?? "MISSING"}
         </span>
       </header>
+
+      <section className="delivery-authority" aria-label="Server Delivery Capability">
+        <div>
+          <span className="eyebrow">SERVER CAPABILITY</span>
+          <h3>{workspace.derivedStage ?? "当前没有可靠的 Delivery Stage"}</h3>
+          {primaryActions.length > 0 ? (
+            <ul className="allowed-action-list" aria-label="Server 允许的主要交付动作">
+              {primaryActions.map((action) => (
+                <li key={action}>
+                  <code>{action}</code>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>Server 当前未允许主要交付动作</p>
+          )}
+        </div>
+        <ul className="evidence-source-list" aria-label="当前证据来源">
+          {workspace.evidenceSources.map((source) => (
+            <li key={`${source.source}:${source.kind}`}>
+              <strong>
+                {source.source} · {source.state}
+              </strong>
+              <small>{source.kind}</small>
+              <time dateTime={source.observedAt}>{source.observedAt}</time>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {workspace.blockedReasons.map((reason) => (
         <div className="workbench-alert" role="alert" key={reason.code}>
@@ -362,7 +402,7 @@ function IssueWorkbench({
             <button
               className="secondary-action"
               type="button"
-              disabled={!engineId || conversationMutation.isPending}
+              disabled={!engineId || !discussionAllowed || conversationMutation.isPending}
               onClick={() => conversationMutation.mutate()}
             >
               新建 Discussion
@@ -398,7 +438,9 @@ function IssueWorkbench({
           <button
             className="primary-action"
             type="button"
-            disabled={!conversationId || !prompt.trim() || runMutation.isPending}
+            disabled={
+              !conversationId || !prompt.trim() || !discussionAllowed || runMutation.isPending
+            }
             onClick={() => runMutation.mutate()}
           >
             继续对话
@@ -509,7 +551,7 @@ function IssueWorkbench({
             disabled={
               !briefVersionId ||
               selectedBrief?.status !== "DRAFT" ||
-              workspace.githubStatus !== "CURRENT" ||
+              githubIssueEvidence?.state !== "COMPLETE" ||
               adoptionMutation.isPending ||
               workspace.delivery.deliveryPaused
             }
@@ -577,7 +619,11 @@ function IssueWorkbench({
                   </label>
                   <button
                     type="button"
-                    disabled={resolveMutation.isPending || !(stopOutcomes[stop.id] ?? "").trim()}
+                    disabled={
+                      resolveMutation.isPending ||
+                      !stopResolutionAllowed ||
+                      !(stopOutcomes[stop.id] ?? "").trim()
+                    }
                     onClick={() =>
                       resolveMutation.mutate({
                         stopId: stop.id,
