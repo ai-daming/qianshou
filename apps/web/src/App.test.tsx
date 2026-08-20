@@ -57,7 +57,46 @@ function makeFacts(overrides: Partial<FactsClient> = {}): FactsClient {
 const workspace: IssueWorkspace = {
   projectId: "qianshou",
   issueNumber: 31,
-  githubStatus: "CURRENT",
+  derivedStage: null,
+  allowedActions: ["VIEW_DISCUSSION", "START_DISCUSSION"],
+  evidenceSources: [
+    {
+      source: "LEDGER",
+      kind: "ISSUE_WORKSPACE",
+      state: "COMPLETE",
+      observedAt: "2026-08-19T15:13:00Z",
+    },
+    {
+      source: "GITHUB",
+      kind: "ISSUE_AND_DEPENDENCIES",
+      state: "COMPLETE",
+      observedAt: "2026-08-19T15:13:00Z",
+    },
+    {
+      source: "GITHUB",
+      kind: "PULL_REQUEST",
+      state: "MISSING",
+      observedAt: "2026-08-19T15:13:00Z",
+    },
+    {
+      source: "GIT",
+      kind: "MAIN_CHECKOUT",
+      state: "COMPLETE",
+      observedAt: "2026-08-19T15:13:00Z",
+    },
+    {
+      source: "RUNNER",
+      kind: "EMBEDDED_RUNNER",
+      state: "COMPLETE",
+      observedAt: "2026-08-19T15:13:00Z",
+    },
+    {
+      source: "TESTS",
+      kind: "REQUIRED_TESTS",
+      state: "MISSING",
+      observedAt: "2026-08-19T15:13:00Z",
+    },
+  ],
   issue: {
     ...readyIssue,
     body: "Goal v1",
@@ -154,6 +193,36 @@ function renderApp(facts: FactsClient, workflow = makeWorkflow()) {
 }
 
 describe("Discussion and DeliveryBaseline workbench", () => {
+  it("renders only Server-derived delivery authority when the page holds stale READY facts", async () => {
+    const failClosedWorkspace: IssueWorkspace = {
+      ...workspace,
+      derivedStage: null,
+      allowedActions: ["VIEW_DISCUSSION"],
+      evidenceSources: workspace.evidenceSources.map((source) =>
+        source.source === "GITHUB" ? { ...source, state: "MISSING" as const } : source,
+      ),
+      blockedReasons: [
+        {
+          code: "GITHUB_FACTS_MISSING",
+          source: "GITHUB",
+          message: "Required current facts are missing or null.",
+        },
+      ],
+    };
+    const workflow = makeWorkflow({ getWorkspace: vi.fn(async () => failClosedWorkspace) });
+    const user = userEvent.setup();
+    renderApp(makeFacts(), workflow);
+
+    await chooseProject(user, "qianshou");
+    await user.type(screen.getByLabelText("Issue 编号"), "31");
+    await user.click(screen.getByRole("button", { name: "打开 Issue" }));
+
+    expect(await screen.findByText("当前没有可靠的 Delivery Stage")).toBeInTheDocument();
+    expect(screen.getAllByText("GITHUB · MISSING").length).toBeGreaterThan(0);
+    expect(screen.getByText("Server 当前未允许主要交付动作")).toBeInTheDocument();
+    expect(screen.queryByText("CREATE_WORKTREE")).not.toBeInTheDocument();
+  });
+
   it("keeps Discussion visible and requires explicit actions for runs, briefs, and adoption", async () => {
     const facts = makeFacts();
     const workflow = makeWorkflow();
@@ -226,6 +295,7 @@ describe("Discussion and DeliveryBaseline workbench", () => {
     const pausedWorkspace: IssueWorkspace = {
       ...workspace,
       briefVersions: [{ ...workspace.briefVersions[0]!, status: "ADOPTED" }],
+      allowedActions: [...workspace.allowedActions, "RESOLVE_STOP"],
       delivery: { ...workspace.delivery, deliveryPaused: true },
       stopConditions: [
         {

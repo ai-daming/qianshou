@@ -43,6 +43,7 @@ func TestDeriveFailsClosedWhenRequiredExternalFactsAreUnavailableOrContradictory
 func TestAgentCompletionClaimCannotAdvanceStageWithoutExternalEvidence(t *testing.T) {
 	input := readyForReviewInput()
 	input.GitHub.Value.PullRequest = nil
+	input.GitHub.Value.PullRequestEvidenceComplete = true
 	input.AgentClaimsCompleted = true
 	got := Derive(input)
 	if got.DerivedStage == nil || *got.DerivedStage != StageWorktreeReady {
@@ -50,6 +51,22 @@ func TestAgentCompletionClaimCannotAdvanceStageWithoutExternalEvidence(t *testin
 	}
 	if !reflect.DeepEqual(primaryActions(got.AllowedActions), []Action{ActionStartImplementation}) {
 		t.Fatalf("actions = %+v", got.AllowedActions)
+	}
+}
+
+func TestUnverifiedPullRequestAbsenceCannotUnlockImplementation(t *testing.T) {
+	input := readyForReviewInput()
+	input.GitHub.Value.PullRequest = nil
+	input.GitHub.Value.PullRequestEvidenceComplete = false
+	got := Derive(input)
+	if got.DerivedStage != nil {
+		t.Fatalf("stage = %v, want nil when PR absence was not verified", got.DerivedStage)
+	}
+	if containsAction(got.AllowedActions, ActionStartImplementation) || hasPrimary(got.AllowedActions) {
+		t.Fatalf("unverified PR absence unlocked implementation: %+v", got.AllowedActions)
+	}
+	if !hasReason(got.BlockedReasons, "PULL_REQUEST_FACTS_MISSING", SourceGitHub) {
+		t.Fatalf("blocked reasons = %+v", got.BlockedReasons)
 	}
 }
 
@@ -65,6 +82,19 @@ func TestOpenStopPreservesDerivedStageButPausesDeliveryAction(t *testing.T) {
 	}
 	if !containsAction(got.AllowedActions, ActionResolveStop) || !containsAction(got.AllowedActions, ActionViewDiscussion) {
 		t.Fatalf("side actions = %+v", got.AllowedActions)
+	}
+}
+
+func TestOpenStopRemainsResolvableWhenCurrentEvidenceInvalidatesStage(t *testing.T) {
+	input := readyForReviewInput()
+	input.Ledger.OpenStopCount = 1
+	input.GitHub.Value.IssueUpdatedAt = "changed-after-baseline"
+	got := Derive(input)
+	if got.DerivedStage != nil {
+		t.Fatalf("stage = %v, want nil for stale baseline", got.DerivedStage)
+	}
+	if !containsAction(got.AllowedActions, ActionResolveStop) || hasPrimary(got.AllowedActions) {
+		t.Fatalf("stale evidence stranded the open StopCondition: %+v", got)
 	}
 }
 
@@ -153,7 +183,7 @@ func readyForReviewInput() Input {
 		Ledger: LedgerFacts{ProjectRepositoryID: 101, ActiveTrack: true, CurrentBaselineID: "baseline-1",
 			BaselineIssueUpdatedAt: "issue-v1", WorktreeBound: true, BindingActive: true},
 		GitHub: Evidence[GitHubFacts]{State: EvidenceComplete, Value: &GitHubFacts{RepositoryID: 101,
-			IssueUpdatedAt: "issue-v1", IssueOpen: true, DependenciesReady: true,
+			IssueUpdatedAt: "issue-v1", IssueOpen: true, DependenciesReady: true, PullRequestEvidenceComplete: true,
 			PullRequest: &PullRequestFacts{Number: 42, HeadSHA: "head-1", State: PullRequestOpen}}},
 		Git: Evidence[GitFacts]{State: EvidenceComplete, Value: &GitFacts{WorktreePresent: true,
 			BindingMatches: true, HeadSHA: "head-1", Dirty: false}},

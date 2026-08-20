@@ -103,11 +103,12 @@ type ReviewFacts struct {
 }
 
 type GitHubFacts struct {
-	RepositoryID      int64
-	IssueUpdatedAt    string
-	IssueOpen         bool
-	DependenciesReady bool
-	PullRequest       *PullRequestFacts
+	RepositoryID                int64
+	IssueUpdatedAt              string
+	IssueOpen                   bool
+	DependenciesReady           bool
+	PullRequestEvidenceComplete bool
+	PullRequest                 *PullRequestFacts
 }
 
 type PullRequestFacts struct {
@@ -174,6 +175,9 @@ func Derive(input Input) Result {
 	if input.Ledger.TrackTerminalKind != "" {
 		return blockedWithoutStage(result, "ACTIVE_TRACK_TERMINAL_CONFLICT", SourceLedger, "A Track cannot be both active and terminal.")
 	}
+	if input.Ledger.OpenStopCount > 0 {
+		result.AllowedActions = append(result.AllowedActions, ActionResolveStop)
+	}
 	if reason := requiredEvidenceReason(input.GitHub.State, input.GitHub.Value == nil, SourceGitHub); reason != nil {
 		result.BlockedReasons = append(result.BlockedReasons, *reason)
 		return result
@@ -189,6 +193,9 @@ func Derive(input Input) Result {
 	}
 	if github.IssueUpdatedAt != input.Ledger.BaselineIssueUpdatedAt {
 		return blockedWithoutStage(result, "BASELINE_STALE", SourceReconciliation, "The current GitHub Issue changed after the adopted DeliveryBaseline.")
+	}
+	if input.Ledger.WorktreeBound && !github.PullRequestEvidenceComplete {
+		return blockedWithoutStage(result, "PULL_REQUEST_FACTS_MISSING", SourceGitHub, "Current pull request existence has not been read completely.")
 	}
 	cleanedAfterMerge := github.PullRequest != nil && github.PullRequest.State == PullRequestMerged && !git.WorktreePresent
 	if input.Ledger.WorktreeBound && (!git.WorktreePresent || !git.BindingMatches) && !cleanedAfterMerge {
@@ -279,7 +286,6 @@ func Derive(input Input) Result {
 	if input.Ledger.OpenStopCount > 0 {
 		result.BlockedReasons = append(result.BlockedReasons, BlockedReason{Code: "OPEN_STOP_CONDITION", Source: SourceLedger,
 			Message: "An explicit StopCondition pauses delivery actions without replacing the derived Stage."})
-		result.AllowedActions = append(result.AllowedActions, ActionResolveStop)
 		primary = ""
 	}
 	if requiresRunner(primary) && !runnerAllowed {

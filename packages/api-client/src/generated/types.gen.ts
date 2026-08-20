@@ -254,15 +254,56 @@ export type ResolveStopConditionRequest = {
   };
 };
 
+export type EvidenceState = "COMPLETE" | "MISSING" | "UNAVAILABLE" | "CONFLICTING";
+
+export type EvidenceSourceName =
+  | "LEDGER"
+  | "GITHUB"
+  | "GIT"
+  | "TESTS"
+  | "RUNNER"
+  | "RECONCILIATION";
+
+export type EvidenceSource = {
+  source: EvidenceSourceName;
+  kind: string;
+  state: EvidenceState;
+  observedAt: string;
+};
+
+export type DeliveryStage =
+  | "WAITING_FOR_WORKTREE"
+  | "WORKTREE_READY"
+  | "IMPLEMENTING"
+  | "READY_FOR_PR_REVIEW"
+  | "REVIEWING"
+  | "CHANGES_REQUESTED"
+  | "APPROVED"
+  | "MERGED_TO_TARGET"
+  | "CLEANUP_REQUIRED"
+  | "CLOSEOUT_COMPLETE";
+
+export type DeliveryAction =
+  | "VIEW_DISCUSSION"
+  | "START_DISCUSSION"
+  | "RESOLVE_STOP"
+  | "CREATE_WORKTREE"
+  | "START_IMPLEMENTATION"
+  | "START_REVIEW"
+  | "START_REPAIR"
+  | "REQUEST_INTEGRATION"
+  | "CLEANUP_WORKTREE"
+  | "CLOSE_TRACK";
+
 export type BlockedReason = {
   code: string;
+  source: EvidenceSourceName;
   message: string;
 };
 
 export type IssueWorkspace = {
   projectId: string;
   issueNumber: number;
-  githubStatus: "CURRENT" | "UNAVAILABLE";
   issue: Issue | null;
   currentIssueBodySha256: string | null;
   engines: Array<EngineSummary>;
@@ -271,7 +312,10 @@ export type IssueWorkspace = {
   runs: Array<AgentRun>;
   delivery: DeliveryWorkspace;
   stopConditions: Array<StopCondition>;
+  derivedStage: DeliveryStage | null;
+  allowedActions: Array<DeliveryAction>;
   blockedReasons: Array<BlockedReason>;
+  evidenceSources: Array<EvidenceSource>;
 };
 
 export type ErrorDetail = {

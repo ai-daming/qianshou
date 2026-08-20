@@ -861,21 +861,45 @@ components:
         outcome:
           type: object
           additionalProperties: true
+    EvidenceState:
+      type: string
+      enum: [COMPLETE, MISSING, UNAVAILABLE, CONFLICTING]
+    EvidenceSourceName:
+      type: string
+      enum: [LEDGER, GITHUB, GIT, TESTS, RUNNER, RECONCILIATION]
+    EvidenceSource:
+      type: object
+      additionalProperties: false
+      required: [source, kind, state, observedAt]
+      properties:
+        source:
+          $ref: "#/components/schemas/EvidenceSourceName"
+        kind: {type: string, minLength: 1}
+        state:
+          $ref: "#/components/schemas/EvidenceState"
+        observedAt: {type: string, minLength: 1}
+    DeliveryStage:
+      type: string
+      enum: [WAITING_FOR_WORKTREE, WORKTREE_READY, IMPLEMENTING, READY_FOR_PR_REVIEW, REVIEWING, CHANGES_REQUESTED, APPROVED, MERGED_TO_TARGET, CLEANUP_REQUIRED, CLOSEOUT_COMPLETE]
+    DeliveryAction:
+      type: string
+      enum: [VIEW_DISCUSSION, START_DISCUSSION, RESOLVE_STOP, CREATE_WORKTREE, START_IMPLEMENTATION, START_REVIEW, START_REPAIR, REQUEST_INTEGRATION, CLEANUP_WORKTREE, CLOSE_TRACK]
     BlockedReason:
       type: object
       additionalProperties: false
-      required: [code, message]
+      required: [code, source, message]
       properties:
         code: {type: string}
+        source:
+          $ref: "#/components/schemas/EvidenceSourceName"
         message: {type: string}
     IssueWorkspace:
       type: object
       additionalProperties: false
-      required: [projectId, issueNumber, githubStatus, issue, currentIssueBodySha256, engines, conversations, briefVersions, runs, delivery, stopConditions, blockedReasons]
+      required: [projectId, issueNumber, issue, currentIssueBodySha256, engines, conversations, briefVersions, runs, delivery, stopConditions, derivedStage, allowedActions, blockedReasons, evidenceSources]
       properties:
         projectId: {type: string}
         issueNumber: {type: integer, minimum: 1}
-        githubStatus: {type: string, enum: [CURRENT, UNAVAILABLE]}
         issue:
           oneOf:
             - $ref: "#/components/schemas/Issue"
@@ -905,10 +929,22 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StopCondition"
+        derivedStage:
+          oneOf:
+            - $ref: "#/components/schemas/DeliveryStage"
+            - type: "null"
+        allowedActions:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryAction"
         blockedReasons:
           type: array
           items:
             $ref: "#/components/schemas/BlockedReason"
+        evidenceSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceSource"
     ErrorDetail:
       type: object
       additionalProperties: false

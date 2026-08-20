@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ai-daming/qianshou/apps/control/internal/capability"
 	"github.com/ai-daming/qianshou/apps/control/internal/config"
 	"github.com/ai-daming/qianshou/apps/control/internal/dod"
 	"github.com/ai-daming/qianshou/apps/control/internal/githubapi"
@@ -507,44 +508,34 @@ func (runtime *workflowRuntime) getWorkspace(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "PROJECT_NOT_FOUND", "The central Project was not found.")
 		return
 	}
-	githubStatus := "CURRENT"
-	blockedReasons := []map[string]string{}
-	var issue *githubapi.Issue
 	ctx, cancel := context.WithTimeout(r.Context(), runtime.timeout)
 	defer cancel()
-	repository, repoErr := runtime.facts.GetRepositoryByID(ctx, project.RepositoryID)
-	if repoErr != nil || repository.ID != project.RepositoryID {
-		githubStatus = "UNAVAILABLE"
-		blockedReasons = append(blockedReasons, map[string]string{"code": "GITHUB_FACTS_UNAVAILABLE", "message": "Current GitHub repository and Issue facts are unavailable."})
-	} else {
-		current, issueErr := runtime.facts.GetIssue(ctx, repository.NameWithOwner, issueNumber)
-		if issueErr != nil || current.Number != issueNumber || current.UpdatedAt == "" {
-			githubStatus = "UNAVAILABLE"
-			blockedReasons = append(blockedReasons, map[string]string{"code": "GITHUB_FACTS_UNAVAILABLE", "message": "Current GitHub repository and Issue facts are unavailable."})
-		} else {
-			issue = &current
-			if len(workspace.Baselines) > 0 {
-				latest := workspace.Baselines[len(workspace.Baselines)-1]
-				if shaText(current.Body) != latest.IssueBodySHA256 {
-					stop := scopeChangeStop(workspace.StopConditions, latest.ID)
-					if stop == nil && workspace.ActiveTrack != nil {
-						evidence, _ := json.Marshal(map[string]string{"baselineIssueBodySha256": latest.IssueBodySHA256,
-							"currentIssueBodySha256": shaText(current.Body), "currentIssueUpdatedAt": current.UpdatedAt,
-							"derivedStage": "WAITING_FOR_WORKTREE"})
-						opened, openErr := runtime.store.OpenStopCondition(r.Context(), ledger.NewStopCondition{
-							ID: stableID("stop", "scope-change", latest.ID), TrackID: workspace.ActiveTrack.ID, BaselineID: latest.ID,
-							Kind: "SCOPE_CHANGE", Reason: "The current GitHub Issue body differs from the adopted DeliveryBaseline.", EvidenceJSON: string(evidence)})
-						if openErr != nil {
-							writeError(w, http.StatusInternalServerError, "LEDGER_UNAVAILABLE", "Scope drift was detected but its StopCondition could not be persisted.")
-							return
-						}
-						workspace.StopConditions = append(workspace.StopConditions, opened)
+	reconciled := runtime.reconcileWorkspace(ctx, project, issueNumber, workspace)
+	if reconciled.Input.GitHub.State == capability.EvidenceComplete && reconciled.Issue != nil {
+		current := reconciled.Issue
+		if len(workspace.Baselines) > 0 {
+			latest := workspace.Baselines[len(workspace.Baselines)-1]
+			if shaText(current.Body) != latest.IssueBodySHA256 {
+				stop := scopeChangeStop(workspace.StopConditions, latest.ID)
+				if stop == nil && workspace.ActiveTrack != nil {
+					evidence, _ := json.Marshal(map[string]string{"baselineIssueBodySha256": latest.IssueBodySHA256,
+						"currentIssueBodySha256": shaText(current.Body), "currentIssueUpdatedAt": current.UpdatedAt,
+						"derivedStage": "WAITING_FOR_WORKTREE"})
+					opened, openErr := runtime.store.OpenStopCondition(r.Context(), ledger.NewStopCondition{
+						ID: stableID("stop", "scope-change", latest.ID), TrackID: workspace.ActiveTrack.ID, BaselineID: latest.ID,
+						Kind: "SCOPE_CHANGE", Reason: "The current GitHub Issue body differs from the adopted DeliveryBaseline.", EvidenceJSON: string(evidence)})
+					if openErr != nil {
+						writeError(w, http.StatusInternalServerError, "LEDGER_UNAVAILABLE", "Scope drift was detected but its StopCondition could not be persisted.")
+						return
 					}
+					workspace.StopConditions = append(workspace.StopConditions, opened)
+					reconciled.Input.Ledger.OpenStopCount++
+					reconciled.Result = capability.Derive(reconciled.Input)
 				}
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, publicWorkspace(projectID, issueNumber, githubStatus, issue, workspace, runtime.config, blockedReasons))
+	writeJSON(w, http.StatusOK, publicWorkspace(projectID, issueNumber, reconciled.Issue, workspace, runtime.config, reconciled))
 }
 
 func (runtime *workflowRuntime) currentProject(w http.ResponseWriter, r *http.Request, projectID string) (ledger.Project, githubapi.Repository, bool) {
@@ -681,7 +672,7 @@ func publicStop(value ledger.StopCondition) map[string]any {
 		"createdAt": value.CreatedAt, "resolution": value.Resolution, "outcome": rawJSONPointer(value.OutcomeJSON), "resolvedAt": value.ResolvedAt}
 }
 
-func publicWorkspace(projectID string, issueNumber int, githubStatus string, issue *githubapi.Issue, workspace ledger.IssueWorkspace, cfg config.Config, blocked []map[string]string) map[string]any {
+func publicWorkspace(projectID string, issueNumber int, issue *githubapi.Issue, workspace ledger.IssueWorkspace, cfg config.Config, reconciled workspaceReconciliation) map[string]any {
 	latestRun := map[string]ledger.AgentRun{}
 	for _, run := range workspace.Runs {
 		latestRun[run.ConversationID] = run
@@ -740,11 +731,13 @@ func publicWorkspace(projectID string, issueNumber int, githubStatus string, iss
 	if issue != nil {
 		currentIssueBodySHA256 = shaText(issue.Body)
 	}
-	return map[string]any{"projectId": projectID, "issueNumber": issueNumber, "githubStatus": githubStatus, "issue": issue,
+	return map[string]any{"projectId": projectID, "issueNumber": issueNumber, "issue": issue,
 		"currentIssueBodySha256": currentIssueBodySHA256,
 		"engines":                engines, "conversations": conversations, "briefVersions": briefs, "runs": runs,
 		"delivery":       map[string]any{"activeTrack": activeTrack, "baselines": baselines, "deliveryPaused": deliveryPaused},
-		"stopConditions": stops, "blockedReasons": blocked}
+		"stopConditions": stops, "derivedStage": reconciled.Result.DerivedStage,
+		"allowedActions": reconciled.Result.AllowedActions, "blockedReasons": reconciled.Result.BlockedReasons,
+		"evidenceSources": reconciled.EvidenceSources}
 }
 
 func writeLedgerMutationError(w http.ResponseWriter, err error, conflictCode, message string) {
